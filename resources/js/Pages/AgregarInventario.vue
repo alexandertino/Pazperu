@@ -1,12 +1,8 @@
-
 <script setup>
 import { ref, computed } from 'vue';
 
 // Simulación de pestaña activa
 const proyecto = ref({ pestaña: 'inventario' });
-
-// Mostrar formulario solo si se hace clic en el botón
-const mostrarFormulario = ref(false);
 
 // Estado del formulario
 const form = ref({
@@ -37,19 +33,9 @@ const submit = () => {
 };
 </script>
 
-
 <template>
-    <!-- Botón para mostrar formulario -->
-    <button
-        v-if="proyecto.pestaña === 'inventario' && !mostrarFormulario"
-        @click="mostrarFormulario = true"
-        class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded"
-    >
-        Agregar Inventario
-    </button>
-
-    <!-- Formulario visible al hacer clic -->
-    <div v-if="mostrarFormulario" class="bg-white max-w-3xl mx-auto mt-6 p-6 shadow rounded">
+    <!-- Formulario SIEMPRE visible -->
+    <div v-if="proyecto.pestaña === 'inventario'" class="bg-white max-w-3xl mx-auto mt-6 p-6 shadow rounded">
         <h1 class="text-2xl font-bold mb-6">Crear Inventario</h1>
 
         <form @submit.prevent="submit" class="space-y-4">
