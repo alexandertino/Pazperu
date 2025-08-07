@@ -44,4 +44,9 @@ Route::get('/proyectos/inventario-nuevo', function () {
     return Inertia::render('AgregarInventario'); 
 })->name('proyectos.AgregarInventario');
 
+//ruta ver
+Route::get('/proyectos/acta-nuevo', function () {
+    return Inertia::render('AgregarSalidas'); 
+})->name('proyectos.AgregarSalidas');
+
 require __DIR__.'/auth.php';

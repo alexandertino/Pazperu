@@ -50,6 +50,136 @@ const proyectos = reactive([
                 producto: 'Piedra',
                 cantidad: 20,
             },
+            {
+                    "id": 3,
+                    "acta": "A003",
+                    "nombre": "Carlos García",
+                    "lugar": "Lima",
+                    "distrito": "Surco",
+                    "fecha": "2025-07-07",
+                    "producto": "Plástico",
+                    "cantidad": 25
+                },
+                {
+                    "id": 4,
+                    "acta": "A004",
+                    "nombre": "Ana Ruiz",
+                    "lugar": "Lima",
+                    "distrito": "San Isidro",
+                    "fecha": "2025-07-10",
+                    "producto": "Vidrio",
+                    "cantidad": 30
+                },
+                {
+                    "id": 5,
+                    "acta": "A005",
+                    "nombre": "Pedro Martínez",
+                    "lugar": "Lima",
+                    "distrito": "La Molina",
+                    "fecha": "2025-07-12",
+                    "producto": "Acero",
+                    "cantidad": 10
+                },
+                {
+                    "id": 6,
+                    "acta": "A006",
+                    "nombre": "Lucía Sánchez",
+                    "lugar": "Lima",
+                    "distrito": "Barranco",
+                    "fecha": "2025-07-15",
+                    "producto": "Madera",
+                    "cantidad": 50
+                },
+                {
+                    "id": 7,
+                    "acta": "A007",
+                    "nombre": "Roberto Torres",
+                    "lugar": "Lima",
+                    "distrito": "Jesus María",
+                    "fecha": "2025-07-18",
+                    "producto": "Madera",
+                    "cantidad": 40
+                },
+                {
+                    "id": 8,
+                    "acta": "A008",
+                    "nombre": "Patricia Gómez",
+                    "lugar": "Lima",
+                    "distrito": "Chorrillos",
+                    "fecha": "2025-07-20",
+                    "producto": "Cemento",
+                    "cantidad": 60
+                },
+                {
+                    "id": 9,
+                    "acta": "A009",
+                    "nombre": "José Fernández",
+                    "lugar": "Lima",
+                    "distrito": "Rímac",
+                    "fecha": "2025-07-22",
+                    "producto": "Acero",
+                    "cantidad": 35
+                },
+                {
+                    "id": 10,
+                    "acta": "A010",
+                    "nombre": "Elena Rodríguez",
+                    "lugar": "Lima",
+                    "distrito": "San Miguel",
+                    "fecha": "2025-07-25",
+                    "producto": "Plástico",
+                    "cantidad": 45
+                },
+                {
+                    "id": 11,
+                    "acta": "A011",
+                    "nombre": "Miguel Hernández",
+                    "lugar": "Lima",
+                    "distrito": "Callao",
+                    "fecha": "2025-07-28",
+                    "producto": "Vidrio",
+                    "cantidad": 70
+                },
+                {
+                    "id": 12,
+                    "acta": "A012",
+                    "nombre": "Clara Martínez",
+                    "lugar": "Lima",
+                    "distrito": "San Juan de Lurigancho",
+                    "fecha": "2025-07-30",
+                    "producto": "Cemento",
+                    "cantidad": 80
+                },
+                {
+                    "id": 13,
+                    "acta": "A013",
+                    "nombre": "Carlos Ruiz",
+                    "lugar": "Lima",
+                    "distrito": "Villa El Salvador",
+                    "fecha": "2025-08-02",
+                    "producto": "Acero",
+                    "cantidad": 55
+                },
+                {
+                    "id": 14,
+                    "acta": "A014",
+                    "nombre": "Isabel Fernández",
+                    "lugar": "Lima",
+                    "distrito": "Pueblo Libre",
+                    "fecha": "2025-08-05",
+                    "producto": "Plástico",
+                    "cantidad": 90
+                },
+                {
+                    "id": 15,
+                    "acta": "A015",
+                    "nombre": "Diego Díaz",
+                    "lugar": "Lima",
+                    "distrito": "Ate",
+                    "fecha": "2025-08-07",
+                    "producto": "Madera",
+                    "cantidad": 120
+                },
         ],
     },
 ]);
@@ -58,11 +188,15 @@ const proyectos = reactive([
 function cambiarPestana(id, nuevaPestana) {
     const proyecto = proyectos.find(p => p.id === id);
     if (proyecto) proyecto.pestaña = nuevaPestana;
-}
+} 
 
 // 📌 Navegar a página de agregar inventario
 function irAInventarioSalidas() {
     router.visit('/proyectos/inventario-nuevo');
+}
+
+function irActasNuevo() {
+    router.visit('/proyectos/acta-nuevo');
 }
 
 // 📌 Métodos de acción
@@ -144,6 +278,7 @@ function eliminarItem(item) {
 
                         <button
                             v-if="proyecto.pestaña === 'salidas'"
+                            @click="irActasNuevo"
                             class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded shadow"
                         >
                             ➕ Agregar Salida
