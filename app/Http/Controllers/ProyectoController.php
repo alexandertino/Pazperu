@@ -45,7 +45,6 @@ class ProyectoController extends Controller
                 $table->integer('stock')->default(0);
                 $table->decimal('precio', 10, 2)->default(0);
                 $table->string('solicitado_por')->nullable();
-                $table->string('proyecto_lg')->nullable();
                 $table->text('comentario')->nullable();
                 $table->timestamps();
             });

@@ -10,12 +10,9 @@ use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ProyectoController;
 use App\Http\Controllers\ProyectoExportController;
 use App\Http\Controllers\ReporteController;
-use App\Http\Controllers\UserController;
-use App\Models\Persona;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
-use SebastianBergmann\CodeCoverage\Report\Xml\Report;
 
 Route::get('/', function () {
     return Inertia::render('Welcome', [

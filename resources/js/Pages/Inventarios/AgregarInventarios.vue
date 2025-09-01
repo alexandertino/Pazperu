@@ -2,7 +2,7 @@
 // 📦 Importamos componentes y librerías necesarias
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'; // Layout para usuarios autenticados
 import { useForm } from '@inertiajs/vue3'; // Manejo de formularios con Inertia
-import { computed, ref } from 'vue'; // Herramientas de Vue
+import { computed, ref, reactive, onMounted } from 'vue'; // Herramientas de Vue
 import axios from 'axios'; // Cliente HTTP
 import { usePage } from '@inertiajs/vue3'; // Acceso a props globales (ej: usuario logueado)
 import Swal from 'sweetalert2'; // Librería para alertas bonitas
@@ -30,9 +30,35 @@ const form = useForm({
     stock: '',
     codigo: '',
     precio: '',
-    solicitado_por: '',
-    proyecto_lg: ''
+    solicitado_por: ''
 });
+
+const opciones = reactive({
+    solicitado_por: [],
+    categoria: [],
+    unidad_medida: []
+});
+
+onMounted(() => {
+    cargarOpciones('solicitado_por');
+    cargarOpciones('categoria');
+    cargarOpciones('unidad_medida');
+});
+
+function cargarOpciones(campo) {
+    axios.get(`/opciones/${campo}`).then(res => {
+        opciones[campo] = res.data;
+    });
+}
+
+function guardarOpcion(campo) {
+    const valor = form[campo]?.trim();
+    if (valor && !opciones[campo].includes(valor)) {
+        axios.post('/opciones', { campo, valor }).then(() => {
+            opciones[campo].push(valor);
+        });
+    }
+}
 
 // 🔄 Controla si se muestra o no el campo "Comentario"
 const mostrarComentario = ref(false);
@@ -127,6 +153,7 @@ const guardarMantener = () => {
             const anioActual = form.anio;
             const numeroActual = form.numero;
             const codigoFinalActual = parseInt(form.codigo_final || 0, 10);
+            const solicitadoPorActual = form.solicitado_por;
 
             form.codigo = codigoCompleto.value;
             form.stock = form.entradas;
@@ -138,16 +165,17 @@ const guardarMantener = () => {
                 .then(() => {
                     Swal.fire('✅ Guardado', 'Inventario creado correctamente (manteniendo datos)', 'success');
 
+                    // 🔹 Reseteo selectivo (sin borrar solicitado_por)
                     form.descripcion = '';
                     form.categoria = '';
                     form.unidad_medida = '';
                     form.entradas = 0;
                     form.precio = 0;
-                    form.solicitado_por = '';
                     form.proyecto_lg = '';
                     form.fecha = fechaActual;
                     form.anio = anioActual;
                     form.numero = numeroActual;
+                    form.solicitado_por = solicitadoPorActual;
                     form.codigo_final = (codigoFinalActual + 1).toString().padStart(3, '0');
                 })
                 .catch(error => {
@@ -198,7 +226,7 @@ const submit = () => {
                         <input v-model="form.numero" type="text" maxlength="3" 
                             class="dark:bg-gray-700 dark:text-white w-16 text-center border rounded" required>
                         <span class="text-gray-500">_C</span>
-                        <input v-model="form.codigo_final" type="text" maxlength="3" placeholder="XXX"
+                        <input v-model="form.codigo_final" type="text" maxlength="3" 
                             class="dark:bg-gray-700 dark:text-white w-16 text-center border rounded" required>
                     </div>
                     <p class="text-sm text-gray-500 mt-1">

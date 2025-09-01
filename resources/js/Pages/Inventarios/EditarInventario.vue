@@ -19,7 +19,6 @@ const form = useForm({
     stock: props.inventario.stock,
     precio: props.inventario.precio,
     solicitado_por: props.inventario.solicitado_por,
-    proyecto_lg: props.inventario.proyecto_lg,
     comentario: props.inventario.comentario ?? "" // si está null → lo deja vacío
 });
 
@@ -110,14 +109,6 @@ const actualizar = () => {
                 <div>
                     <label class="block font-bold mb-1 dark:text-gray-200">Solicitado por</label>
                     <input v-model="form.solicitado_por" type="text"
-                        class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
-                        required>
-                </div>
-
-                <!-- Proyecto -->
-                <div>
-                    <label class="block font-bold mb-1 dark:text-gray-200">A cargo</label>
-                    <input v-model="form.proyecto_lg" type="text"
                         class="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
                         required>
                 </div>

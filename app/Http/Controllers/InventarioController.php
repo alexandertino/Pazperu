@@ -38,8 +38,7 @@ class InventarioController extends Controller
         ]);
     }
 
-    public function store(Request $request, $proyectoId)
-    {
+    public function store(Request $request, $proyectoId){
         $request->validate([
             'codigo' => 'required|string|max:255',
             'fecha' => 'required|date',
@@ -49,7 +48,6 @@ class InventarioController extends Controller
             'entradas' => 'required|integer|min:0',
             'precio' => 'required|numeric|min:0',
             'solicitado_por' => 'nullable|string|max:255',
-            'proyecto_lg' => 'nullable|string|max:255',
             'comentario' => 'nullable|string', // 👈 validación
         ]);
 
@@ -67,7 +65,6 @@ class InventarioController extends Controller
             'stock' => $request->entradas,
             'precio' => $request->precio,
             'solicitado_por' => $request->solicitado_por,
-            'proyecto_lg' => $request->proyecto_lg,
             'comentario' => $request->comentario, // 👈 se guarda el comentario
             'created_at' => now(),
             'updated_at' => now(),
@@ -156,7 +153,6 @@ class InventarioController extends Controller
                 'stock' => $request->stock,
                 'precio' => $request->precio,
                 'solicitado_por' => $request->solicitado_por,
-                'proyecto_lg' => $request->proyecto_lg,
                 'comentario' => $request->comentario, // 👈 se actualiza el comentario
                 'updated_at' => now(),
             ]);

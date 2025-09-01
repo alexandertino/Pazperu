@@ -16,9 +16,7 @@ class Inventario extends Model
         'salidas',
         'stock',
         'proyecto_id',
-        'precio',
-        'solicitado_por',
-        'a_cargo',     
+        'precio',   
     ];
 
     public function proyecto()

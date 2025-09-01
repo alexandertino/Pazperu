@@ -79,19 +79,6 @@ const categorias = computed(() => {
 const solicitantesUnicos = computed(() => {
     return [...new Set(props.inventarios.map(i => i.solicitado_por).filter(Boolean))];
 });
-const proyectosLgUnicosFiltrados = computed(() => {
-    if (filtroSolicitadoPor.value === "todos") {
-        return [];
-    }
-    return [
-        ...new Set(
-            props.inventarios
-                .filter(i => i.solicitado_por === filtroSolicitadoPor.value)
-                .map(i => i.proyecto_lg)
-                .filter(Boolean)
-        )
-    ];
-});
 
 const inventarioFiltrado = computed(() =>
     [...props.inventarios]
@@ -120,24 +107,12 @@ const resumenSolicitadoPor = computed(() =>
     }, {})
 );
 
-// Resumen por Proyecto
-const resumenProyecto = computed(() =>
-    props.inventarios.reduce((acc, item) => {
-        if (!item.proyecto_lg) return acc;
-        acc[item.proyecto_lg] = (acc[item.proyecto_lg] || 0) + (item.precio * item.stock);
-        return acc;
-    }, {})
-);
 
 // Estados para expandir/cerrar detalle
 const solicitadoExpandido = reactive({});
-const proyectoExpandido = reactive({});
 
 const toggleSolicitado = (user) => {
-  solicitadoExpandido[user] = !solicitadoExpandido[user];
-};
-const toggleProyecto = (proj) => {
-  proyectoExpandido[proj] = !proyectoExpandido[proj];
+    solicitadoExpandido[user] = !solicitadoExpandido[user];
 };
 
 
@@ -404,32 +379,6 @@ const verSalidas = async (codigo) => {
                     </li>
                 </ul>
             </div>
-
-            <!-- Por Proyecto -->
-            <div class="mt-6">
-                <h3 class="font-semibold text-gray-800 dark:text-gray-200 mb-3 flex items-center gap-2">
-                    <span class="text-orange-500">🏗️</span> Por Proyecto
-                </h3>
-                <ul class="divide-y divide-gray-200 dark:divide-gray-700">
-                    <li v-for="(valor, proj) in resumenProyecto" :key="proj" class="py-2">
-                        <div class="flex justify-between">
-                            <span class="text-gray-700 dark:text-gray-300">{{ proj }}</span>
-                            <span class="font-bold text-gray-900 dark:text-gray-100">S/ {{ valor.toFixed(2) }}</span>
-                        </div>
-                        <button @click="toggleProyecto(proj)"
-                            class="text-xs text-orange-600 dark:text-orange-300 mt-1 hover:underline">
-                            {{ proyectoExpandido[proj] ? 'Ocultar detalle' : 'Ver detalle' }}
-                        </button>
-                        <ul v-if="proyectoExpandido[proj]"
-                            class="mt-2 text-sm ml-4 list-disc space-y-1 dark:text-white">
-                            <li v-for="item in props.inventarios.filter(i => i.proyecto_lg === proj)" :key="item.id">
-                                {{ item.descripcion }}: {{ item.stock }} × S/ {{ item.precio }} =
-                                <strong>S/ {{ (item.stock * item.precio).toFixed(2) }}</strong>
-                            </li>
-                        </ul>
-                    </li>
-                </ul>
-            </div>
         </div>
 
 
@@ -484,20 +433,6 @@ const verSalidas = async (codigo) => {
                             </select>
                         </div>
 
-                        <!-- Proyecto LG -->
-                        <div v-if="filtroSolicitadoPor !== 'todos'">
-                            <label class="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Proyecto
-                                (LG)</label>
-                            <select v-model="filtroProyectoLg" class="w-48 border rounded-lg px-3 py-2 text-sm shadow-sm focus:ring-2 focus:ring-indigo-500
-                            dark:bg-gray-700 dark:text-white dark:border-gray-600">
-                                <option value="todos">Todos</option>
-                                <option v-for="proyecto in proyectosLgUnicosFiltrados" :key="proyecto"
-                                    :value="proyecto">
-                                    {{ proyecto }}
-                                </option>
-                            </select>
-                        </div>
-
                         <!-- Checkbox stock -->
                         <label class="flex items-center gap-2 pb-2 text-sm text-gray-700 dark:text-gray-300">
                             <input type="checkbox" v-model="filtroStock" class="w-4 h-4 accent-indigo-600" />
@@ -509,7 +444,7 @@ const verSalidas = async (codigo) => {
                         <button @click="toggleOrdenInventario"
                             class="px-4 py-2 bg-gray-700 text-white rounded-lg shadow hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-500 transition-colors duration-200 dark:bg-gray-200 dark:text-gray-800 dark:hover:bg-gray-300">
                             📅 Ordenar: <span class="font-semibold">{{ ordenInventarioAsc ? 'Antiguos' : 'Recientes'
-                            }}</span>
+                                }}</span>
                         </button>
                         <button @click="refrescarInventario"
                             class="px-4 py-2 bg-blue-500 text-white rounded-lg shadow hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-400 transition-colors duration-200">
@@ -541,7 +476,6 @@ const verSalidas = async (codigo) => {
                                 <th class="p-3">Stock</th>
                                 <th class="p-3">Precio</th>
                                 <th class="p-3">Solicitado por</th>
-                                <th class="p-3">Proyecto</th>
                                 <th class="p-3" v-if="user.role === 'admin' || user.role === 'equipo'">
                                     Acciones
                                 </th>
@@ -565,7 +499,6 @@ const verSalidas = async (codigo) => {
                                 <td class="p-3">{{ item.stock }}</td>
                                 <td class="p-3">S/ {{ Number(item.precio ?? 0).toFixed(2) }}</td>
                                 <td class="p-3">{{ item.solicitado_por }}</td>
-                                <td class="p-3">{{ item.proyecto_lg }}</td>
                                 <td class="p-3 flex gap-2">
                                     <!-- 🔹 Solo admin -->
                                     <template v-if="user.role === 'admin'">
