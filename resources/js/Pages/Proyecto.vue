@@ -1,41 +1,20 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
-import { Head } from '@inertiajs/vue3';
-import { ref } from 'vue';
+import { Head, usePage, router } from '@inertiajs/vue3';
 
-// Datos de prueba por ahora
-const proyectos = ref([
-    {
-        id: 1,
-        nombre: 'Proyecto Alpha',
-        estado: 'En Proceso',
-        descripcion: 'Primera fase del sistema',
-        fecha_inicio: '2024-05-01',
-        fecha_fin: '2024-08-01',
-    },
-    {
-        id: 2,
-        nombre: 'Proyecto Beta',
-        estado: 'Terminado',
-        descripcion: 'Plataforma interna',
-        fecha_inicio: '2024-01-15',
-        fecha_fin: '2024-04-30',
-    },
-]);
+const { props } = usePage();
+const proyectos = props.proyectos;
 
-function editarProyecto(id) {
-    alert(`Editar proyecto con ID: ${id}`);
+function irAInventarioSalidas(id) {
+    router.visit(`/proyectos/${id}/inventario-salidas`);
 }
 
-import { router } from '@inertiajs/vue3';
-
-function irAInventarioSalidas() {
-    router.visit('/proyectos/inventario-salidas');
-}
 
 </script>
 
+
 <template>
+
     <Head title="Proyectos" />
 
     <AuthenticatedLayout>
@@ -65,24 +44,20 @@ function irAInventarioSalidas() {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <tr
-                                        v-for="(proyecto, index) in proyectos"
-                                        :key="index"
-                                        class="border-t dark:border-gray-600"
-                                    >
-                                    
+                                    <tr v-for="(proyecto, index) in proyectos" :key="index"
+                                        class="border-t dark:border-gray-600">
+
                                         <td class="p-3">{{ proyecto.nombre }}</td>
                                         <td class="p-3">{{ proyecto.estado }}</td>
                                         <td class="p-3">{{ proyecto.descripcion }}</td>
                                         <td class="p-3">{{ proyecto.fecha_inicio }}</td>
                                         <td class="p-3">{{ proyecto.fecha_fin }}</td>
                                         <td class="p-3 space-x-2">
-                                            <button
-                                                @click="irAInventarioSalidas"
-                                                class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-                                            >
+                                            <button @click="irAInventarioSalidas(proyecto.id)"
+                                                class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
                                                 Ver Inventario y Salidas
                                             </button>
+
                                         </td>
                                     </tr>
                                 </tbody>

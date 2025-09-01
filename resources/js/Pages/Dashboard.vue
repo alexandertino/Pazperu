@@ -1,9 +1,13 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import { Head } from '@inertiajs/vue3';
+import { Link } from '@inertiajs/vue3';
+import { usePage } from '@inertiajs/vue3'
+const user = usePage().props.auth.user
 </script>
 
 <template>
+
     <Head title="Dashboard" />
 
     <AuthenticatedLayout>
@@ -25,26 +29,26 @@ import { Head } from '@inertiajs/vue3';
                         <div class="flex justify-center">
                             <div class="flex flex-wrap gap-6">
                                 <a href="/CrearProyecto"
-                                    class="px-6 py-3 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition">
+                                    class="px-6 py-3 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition"
+                                    v-if="user.role === 'admin'">
                                     Crear Proyecto
                                 </a>
 
-                                <a href="/Proyecto"
+                                <a href="/proyectos"
                                     class="px-6 py-3 bg-green-600 text-white rounded-lg shadow-md hover:bg-green-700 transition">
                                     Proyectos
                                 </a>
 
-                                <a href="/reportes"
-                                    class="px-6 py-3 bg-purple-600 text-white rounded-lg shadow-md hover:bg-purple-700 transition">
-                                    Ver Reportes
-                                </a>
+                                <Link :href="route('reportes.index')"
+                                    class="px-6 py-3 bg-purple-600 text-white rounded-lg shadow-md hover:bg-purple-700 transition"
+                                    v-if="user.role === 'admin'">
+                                Ver Reportes
+                                </Link>
                             </div>
                         </div>
-
                     </div>
                 </div>
             </div>
         </div>
     </AuthenticatedLayout>
 </template>
-

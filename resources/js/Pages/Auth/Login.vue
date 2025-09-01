@@ -29,7 +29,7 @@ const submit = () => {
 };
 </script>
 
-<template>
+<template> 
     <GuestLayout>
         <Head title="Log in" />
 
