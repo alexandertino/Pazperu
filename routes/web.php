@@ -10,9 +10,13 @@ use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ProyectoController;
 use App\Http\Controllers\ProyectoExportController;
 use App\Http\Controllers\ReporteController;
+use App\Http\Controllers\CategoriaController;
+use App\Http\Controllers\UnidadMedidaController;
+use App\Http\Controllers\SolicitanteController;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
+
 
 Route::get('/', function () {
     return Inertia::render('Welcome', [
@@ -107,5 +111,11 @@ Route::get('/reportes', [ActivityLogController::class, 'index'])
     ->name('reportes.index');
 
 Route::get('/personas', [PersonaController::class, 'index']);
+
+Route::get('/categorias', [CategoriaController::class, 'index']);
+
+Route::get('/unidades-medida', [UnidadMedidaController::class, 'index']);
+
+Route::get('/solicitantes', [SolicitanteController::class, 'index']);
 
 require __DIR__.'/auth.php';

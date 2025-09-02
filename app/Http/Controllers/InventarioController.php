@@ -48,12 +48,41 @@ class InventarioController extends Controller
             'entradas' => 'required|integer|min:0',
             'precio' => 'required|numeric|min:0',
             'solicitado_por' => 'nullable|string|max:255',
-            'comentario' => 'nullable|string', // 👈 validación
+            'comentario' => 'nullable|string',
         ]);
 
         $proyecto = Proyecto::findOrFail($proyectoId);
         $tablaInventario = 'inventario_proyecto_' . Str::of($proyecto->nombre)->lower()->replace(' ', '_');
 
+        // 🔹 Registrar o actualizar en tabla global de categorías
+        if (!DB::table('categorias')->where('nombre', $request->categoria)->exists()) {
+            DB::table('categorias')->insert([
+                'nombre'     => $request->categoria,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        // 🔹 Registrar o actualizar en tabla global de unidades de medida
+        if (!DB::table('unidades_medida')->where('nombre', $request->unidad_medida)->exists()) {
+            DB::table('unidades_medida')->insert([
+                'nombre'     => $request->unidad_medida,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        // 🔹 Registrar o actualizar en tabla global de solicitantes (si existe valor)
+        if (!empty($request->solicitado_por) &&
+            !DB::table('solicitantes')->where('nombre', $request->solicitado_por)->exists()) {
+            DB::table('solicitantes')->insert([
+                'nombre'     => $request->solicitado_por,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        // 🔹 Guardar inventario (manteniendo los valores de texto)
         $id = DB::table($tablaInventario)->insertGetId([
             'codigo' => $request->codigo,
             'fecha' => $request->fecha,
@@ -65,7 +94,7 @@ class InventarioController extends Controller
             'stock' => $request->entradas,
             'precio' => $request->precio,
             'solicitado_por' => $request->solicitado_por,
-            'comentario' => $request->comentario, // 👈 se guarda el comentario
+            'comentario' => $request->comentario,
             'created_at' => now(),
             'updated_at' => now(),
         ]);

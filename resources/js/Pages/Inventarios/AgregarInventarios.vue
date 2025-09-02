@@ -33,32 +33,54 @@ const form = useForm({
     solicitado_por: ''
 });
 
-const opciones = reactive({
-    solicitado_por: [],
-    categoria: [],
-    unidad_medida: []
+// 📦 Datos desde el backend
+const categorias = ref([]);
+const unidades = ref([]);
+const solicitantes = ref([]);
+
+// 🔎 Filtrados en tiempo real
+const categoriasFiltradas = computed(() =>
+    categorias.value.filter(c =>
+        c.nombre.toLowerCase().includes(form.value.categoria.toLowerCase())
+    )
+);
+
+const unidadesFiltradas = computed(() =>
+    unidades.value.filter(u =>
+        u.nombre.toLowerCase().includes(form.value.unidad_medida.toLowerCase())
+    )
+);
+
+const solicitantesFiltrados = computed(() =>
+    solicitantes.value.filter(s =>
+        s.nombre.toLowerCase().includes(form.value.solicitado_por.toLowerCase())
+    )
+);
+
+// ✅ Seleccionar sugerencia
+const seleccionarCategoria = (nombre) => {
+    form.value.categoria = nombre;
+};
+
+const seleccionarUnidad = (nombre) => {
+    form.value.unidad_medida = nombre;
+};
+
+const seleccionarSolicitante = (nombre) => {
+    form.value.solicitado_por = nombre;
+};
+
+// 🔄 Cargar datos iniciales
+onMounted(async () => {
+    const resCat = await axios.get("/categorias");
+    categorias.value = resCat.data;
+
+    const resUni = await axios.get("/unidades-medida");
+    unidades.value = resUni.data;
+
+    const resSol = await axios.get("/solicitantes");
+    solicitantes.value = resSol.data;
 });
-
-onMounted(() => {
-    cargarOpciones('solicitado_por');
-    cargarOpciones('categoria');
-    cargarOpciones('unidad_medida');
-});
-
-function cargarOpciones(campo) {
-    axios.get(`/opciones/${campo}`).then(res => {
-        opciones[campo] = res.data;
-    });
-}
-
-function guardarOpcion(campo) {
-    const valor = form[campo]?.trim();
-    if (valor && !opciones[campo].includes(valor)) {
-        axios.post('/opciones', { campo, valor }).then(() => {
-            opciones[campo].push(valor);
-        });
-    }
-}
 
 // 🔄 Controla si se muestra o no el campo "Comentario"
 const mostrarComentario = ref(false);
@@ -171,7 +193,6 @@ const guardarMantener = () => {
                     form.unidad_medida = '';
                     form.entradas = 0;
                     form.precio = 0;
-                    form.proyecto_lg = '';
                     form.fecha = fechaActual;
                     form.anio = anioActual;
                     form.numero = numeroActual;
@@ -203,7 +224,7 @@ const submit = () => {
         <!-- Contenedor principal -->
         <div class="bg-white dark:bg-gray-800 max-w-3xl mx-auto mt-6 p-6 shadow rounded-lg"
             v-if="user.role === 'admin'">
-            
+
             <!-- Título -->
             <h1 class="text-2xl font-bold mb-6 text-gray-700 dark:text-gray-200">
                 Crear Inventario
@@ -211,22 +232,23 @@ const submit = () => {
 
             <!-- Formulario -->
             <form @submit.prevent="submit" class="space-y-6">
-                
+
                 <!-- Código Producto -->
                 <div>
                     <label class="block font-bold mb-2 text-gray-700 dark:text-gray-200">
                         Código Producto
                     </label>
-                    <div class="flex items-center p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700">
+                    <div
+                        class="flex items-center p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700">
                         <!-- Código dinámico dividido en 3 partes -->
                         <span class="text-gray-500">IDPP/</span>
-                        <input v-model="form.anio" type="text" maxlength="4" 
+                        <input v-model="form.anio" type="text" maxlength="4"
                             class="dark:bg-gray-700 dark:text-white w-16 text-center border rounded" required>
                         <span class="text-gray-500">_</span>
-                        <input v-model="form.numero" type="text" maxlength="3" 
+                        <input v-model="form.numero" type="text" maxlength="3"
                             class="dark:bg-gray-700 dark:text-white w-16 text-center border rounded" required>
                         <span class="text-gray-500">_C</span>
-                        <input v-model="form.codigo_final" type="text" maxlength="3" 
+                        <input v-model="form.codigo_final" type="text" maxlength="3"
                             class="dark:bg-gray-700 dark:text-white w-16 text-center border rounded" required>
                     </div>
                     <p class="text-sm text-gray-500 mt-1">
@@ -237,49 +259,60 @@ const submit = () => {
                 <!-- Fecha -->
                 <div>
                     <label class="block font-bold mb-1 dark:text-gray-200">Fecha</label>
-                    <input v-model="form.fecha" type="date" class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white" required>
+                    <input v-model="form.fecha" type="date"
+                        class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white" required>
                 </div>
 
                 <!-- Descripción -->
                 <div>
                     <label class="block font-bold mb-1 dark:text-gray-200">Descripción</label>
-                    <input v-model="form.descripcion" type="text" class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white" required>
+                    <input v-model="form.descripcion" type="text"
+                        class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white" required>
                 </div>
 
                 <!-- Categoria -->
                 <div>
                     <label class="block font-bold mb-1 dark:text-gray-200">Categoría</label>
-                    <input v-model="form.categoria" type="text" class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white" required>
+                    <input v-model="form.categoria" type="text" list="categoriasList" @change="autocompletarCategoria"
+                        class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white" required />
+                    <datalist id="categoriasList">
+                        <option v-for="c in categorias" :key="c.id" :value="c.nombre" />
+                    </datalist>
                 </div>
 
                 <!-- Unidad de Medida -->
                 <div>
                     <label class="block font-bold mb-1 dark:text-gray-200">Unidad de Medida</label>
-                    <input v-model="form.unidad_medida" type="text" class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white" required>
+                    <input v-model="form.unidad_medida" type="text" list="unidadesList" @change="autocompletarUnidad"
+                        class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white" required />
+                    <datalist id="unidadesList">
+                        <option v-for="u in unidades" :key="u.id" :value="u.nombre" />
+                    </datalist>
                 </div>
 
                 <!-- Entradas -->
                 <div>
                     <label class="block font-bold mb-1 dark:text-gray-200">Entradas</label>
-                    <input v-model="form.entradas" type="number" min="1" class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white" required>
+                    <input v-model="form.entradas" type="number" min="1"
+                        class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white" required>
                 </div>
 
                 <!-- Precio -->
                 <div>
                     <label class="block font-bold mb-1 dark:text-gray-200">Precio (S/) (Unitario)</label>
-                    <input v-model="form.precio" type="number" step="0.01" min="0" class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white" required>
+                    <input v-model="form.precio" type="number" step="0.01" min="0"
+                        class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white" required>
                 </div>
 
                 <!-- Solicitado por -->
                 <div>
                     <label class="block font-bold mb-1 dark:text-gray-200">Solicitado por</label>
-                    <input v-model="form.solicitado_por" type="text" class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white">
-                </div>
-
-                <!-- Proyecto -->
-                <div>
-                    <label class="block font-bold mb-1 dark:text-gray-200">Proyecto</label>
-                    <input v-model="form.proyecto_lg" type="text" class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white">
+                    <input v-model="form.solicitado_por" type="text" list="solicitantesList"
+                        @change="autocompletarSolicitante"
+                        class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white" required />
+                    <datalist id="solicitantesList">
+                        <option v-for="s in solicitantes" :key="s.id" :value="s.nombre" />
+                    </datalist>
                 </div>
 
                 <!-- Comentario (opcional, se muestra con toggle) -->
