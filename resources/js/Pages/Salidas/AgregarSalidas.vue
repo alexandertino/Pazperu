@@ -1,317 +1,972 @@
 <script setup>
-import { ref, computed, watch, onMounted, defineProps } from 'vue';
+import { ref, reactive, computed, watch, nextTick, onMounted, defineProps } from 'vue';
 import { usePage } from '@inertiajs/vue3';
 import axios from 'axios';
 import Swal from 'sweetalert2';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 
-const user = usePage().props.auth.user;
+const props = defineProps({ proyecto: Object, user: Object });
+const user = usePage().props.auth?.user || null;
 
-const props = defineProps({
-  proyecto: Object,
-  user: Object
-});
-
-
-// 🔹 Estado de carga
-const cargando = ref(false);
-
-const form = ref({
+/* ---------- Estado ---------- */
+const form = reactive({
   codigo1: '',
-  codigo2: '',
-  n_acta: '',
-  persona_id: null,
+  codigo2: String(new Date().getFullYear()),
+  persona_id: null,   // NO asignamos por defecto: si es nueva persona, el backend la creará
   nombre: '',
   lugar: '',
   distrito: '',
-  fecha: '',
-  producto: '',
-  cantidad: 1
-});
-
-onMounted(() => {
-  const params = new URLSearchParams(window.location.search);
-  const codigo = params.get("codigo");
-  if (codigo) {
-    form.value.producto = decodeURIComponent(codigo);
-  }
+  fecha: new Date().toISOString().slice(0, 10),
+  producto_code: '',
+  producto_label: '',
+  cantidad: 1,
+  um: ''
 });
 
 const personas = ref([]);
-onMounted(async () => {
-  try {
-    const res = await axios.get('/personas');
-    personas.value = res.data;
-  } catch (error) {
-    console.error('Error cargando personas', error);
-  }
+const productos = ref([]);
+const draft = ref([]);
+const productoEncontrado = ref(null);
+
+/* Inventario modal */
+const showInventoryModal = ref(false);
+const inventoryFilter = reactive({ q: '' });
+const inventory = ref([]);
+const inventoryLoading = ref(false);
+const inventoryError = ref(null);
+
+/* UI predictivos */
+const mostrarPersonas = ref(false);
+const mostrarSugerencias = ref(false);
+
+/* ---------- util / helpers ---------- */
+const normalizeProduct = (p = {}) => ({
+  code: (p.code || p.codigo || p.id || '')?.toString(),
+  producto: (p.producto || p.descripcion || p.name || '')?.toString(),
+  descripcion: (p.descripcion || p.producto || p.name || '')?.toString(),
+  um: (p.um || p.unidad || p.unidad_medida || p.uom || '')?.toString(),
+  stock: (typeof p.stock !== 'undefined')
+    ? Number(p.stock)
+    : (typeof p.cantidad !== 'undefined' ? Number(p.cantidad) : null),
+  raw: p
 });
 
-// -----------------------------
-// CÓDIGO ACTA
-// -----------------------------
+
 const codigoGenerado = computed(() => {
-  const c1 = (form.value.codigo1 || '').padStart(3, '0');
-  const c2 = (form.value.codigo2 || '').padStart(3, '0');
+  const c1 = String(form.codigo1 || '').padStart(3, '0');
+  const c2 = String(form.codigo2 || '').padStart(4, '0');
   return `AE - ${c1} - ${c2}`;
 });
 
-// -----------------------------
-// PRODUCTO ENCONTRADO (buscador)
-// -----------------------------
-const productoEncontrado = ref(null);
+const draftTotals = computed(() => {
+  const lines = draft.value.length;
+  const totalQty = draft.value.reduce((s, it) => s + Number(it.cantidad || 0), 0);
+  return { lines, totalQty };
+});
 
-watch(
-  () => form.value.producto,
-  async (nuevoCodigo) => {
-    if (nuevoCodigo && nuevoCodigo.length >= 3) {
-      try {
-        const res = await axios.get(
-          `/proyectos/${props.proyecto.id}/buscar-producto/${encodeURIComponent(nuevoCodigo)}`
-        );
-        productoEncontrado.value = res.data.producto || null;
-      } catch (e) {
-        productoEncontrado.value = null;
+const uid = () => Date.now().toString(36) + Math.floor(Math.random() * 10000).toString(36);
+
+/* ---------- axios interceptors (sin logs) ---------- */
+axios.interceptors.request.use((config) => config, (err) => Promise.reject(err));
+axios.interceptors.response.use((res) => res, (err) => Promise.reject(err));
+
+/* ---------- carga inicial (no asignamos nombre por defecto) ---------- */
+onMounted(async () => {
+  try {
+    const res = await axios.get('/personas');
+    personas.value = Array.isArray(res.data) ? res.data : (res.data?.personas || []);
+  } catch (e) {
+    personas.value = [];
+  }
+
+  try {
+    const r2 = await axios.get(`/proyectos/${props.proyecto.id}/productos`);
+    productos.value = Array.isArray(r2.data) ? r2.data.map(normalizeProduct) : [];
+  } catch (e) {
+    productos.value = [];
+  }
+
+  // No asignamos persona_id ni nombre por defecto: el usuario decide o será creada por el backend.
+  if (!form.codigo2 || String(form.codigo2).trim() === '') form.codigo2 = String(new Date().getFullYear());
+});
+
+/* ---------- Personas predictivo ---------- */
+const personasFiltradas = computed(() => {
+  const q = String(form.nombre || '').toLowerCase().trim();
+  if (!q) return personas.value.slice(0, 12);
+  return personas.value.filter(p =>
+    ((p.nombre || '') + ' ' + (p.distrito || '') + ' ' + (p.lugar || '')).toLowerCase().includes(q)
+  ).slice(0, 12);
+});
+
+const onPersonaInput = (e) => {
+  form.nombre = e?.target?.value ?? form.nombre;
+  // cuando escribes no asignamos persona_id automáticamente — si quieres autocompletar remoto, podríamos hacer petición aquí.
+  form.persona_id = null;
+  mostrarPersonas.value = String(form.nombre || '').trim().length > 0;
+};
+
+const seleccionarPersona = (p) => {
+  if (!p) return;
+  form.persona_id = p.id ?? null;
+  form.nombre = p.nombre || '';
+  form.lugar = p.lugar || '';
+  form.distrito = p.distrito || '';
+  mostrarPersonas.value = false;
+  nextTick(() => {
+    const el = document.querySelector('#producto_code');
+    if (el) el.focus();
+  });
+};
+const filteredInventory = computed(() => {
+  const q = String(inventoryFilter.q || '').toLowerCase().trim();
+
+  return inventory.value
+    .filter(item => {
+      // Excluir explícitamente cuando stock === 0 (mostrar si stock es null/undefined o >0)
+      if (typeof item.stock !== 'undefined' && Number(item.stock) === 0) return false;
+      return true;
+    })
+    .filter(item => {
+      if (!q) return true; // si no hay búsqueda, todo (con stock !== 0) pasa
+      const hay = (
+        (item.producto || '') +
+        ' ' +
+        (item.descripcion || '') +
+        ' ' +
+        (String(item.code || item.id || '') || '')
+      ).toLowerCase();
+      return hay.includes(q);
+    });
+});
+/* ---------- Productos predictivo (local) ---------- */
+const productosFiltrados = computed(() => {
+  const q = String(form.producto_code || '').toLowerCase().trim();
+  if (!q) return [];
+  return productos.value.filter(p =>
+    ((p.code || '') + ' ' + (p.producto || '') + ' ' + (p.descripcion || '')).toLowerCase().includes(q)
+  ).slice(0, 12);
+});
+
+const onProductoInput = (e) => {
+  form.producto_code = e?.target?.value ?? form.producto_code;
+  productoEncontrado.value = null;
+  mostrarSugerencias.value = String(form.producto_code || '').trim().length > 0;
+};
+
+const seleccionarProducto = (p) => {
+  if (!p) return;
+  const normalized = (p && p.code) ? p : normalizeProduct(p);
+  form.producto_code = normalized.code || normalized.producto || '';
+  form.producto_label = normalized.producto || normalized.descripcion || form.producto_label;
+  form.um = normalized.um || form.um;
+  productoEncontrado.value = normalized;
+  mostrarSugerencias.value = false;
+  nextTick(() => {
+    const el = document.querySelector('#producto_code');
+    if (el) el.focus();
+  });
+};
+
+/* ---------- Draft helpers ---------- */
+const resetProductFields = () => { form.producto_code = ''; form.producto_label = ''; form.cantidad = 1; form.um = ''; productoEncontrado.value = null; };
+
+const findProductByCode = (code) => {
+  if (!code) return undefined;
+  const c = String(code).toLowerCase().trim();
+  let found = productos.value.find(p => (p.code || '').toLowerCase() === c);
+  if (found) return found;
+  found = productos.value.find(p => (p.producto || '').toLowerCase() === c);
+  if (found) return found;
+  found = productos.value.find(p => (p.code || '').toLowerCase().includes(c) || (p.producto || '').toLowerCase().includes(c) || (p.descripcion || '').toLowerCase().includes(c));
+  return found;
+};
+
+const addToDraft = () => {
+  if (!form.producto_code && !form.producto_label) { Swal.fire('Falta producto', 'Selecciona o escribe un producto.', 'warning'); return; }
+  if (!form.cantidad || Number(form.cantidad) <= 0) { Swal.fire('Cantidad inválida', 'La cantidad debe ser mayor a 0.', 'warning'); return; }
+  const prodFound = findProductByCode(form.producto_code || form.producto_label);
+  const prod = prodFound || { code: (form.producto_code || form.producto_label), producto: (form.producto_label || form.producto_code || '—'), descripcion: '', um: (form.um || 'UNIDAD'), stock: Infinity };
+  const unit = prod.um || form.um || 'UNIDAD';
+  const existing = draft.value.find(d => (String(d.producto_code) === String(prod.code || prod.producto)) && d.um === unit);
+  if (existing) existing.cantidad = Number(existing.cantidad) + Number(form.cantidad);
+  else draft.value.push({
+    id: uid(),
+    producto_code: prod.code || prod.producto,
+    producto: prod.producto || prod.descripcion || prod.code,
+    producto_label: form.producto_label || prod.producto || prod.descripcion || prod.code,
+    descripcion: prod.descripcion || '',
+    um: unit,
+    cantidad: Number(form.cantidad)
+  });
+  Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `Agregado: ${prod.producto || prod.descripcion} — ${form.cantidad} ${unit}`, timer: 1200, showConfirmButton: false });
+  resetProductFields();
+  nextTick(() => { const el = document.querySelector('#producto_code'); if (el) el.focus(); });
+};
+
+const editDraftItem = (id) => {
+  const it = draft.value.find(d => d.id === id); if (!it) return;
+  Swal.fire({
+    title: `Editar ${it.producto}`,
+    html: `<label class="swal2-label">Cantidad</label><input id="swal-cant" type="number" min="0.0001" step="0.0001" value="${it.cantidad}" class="swal2-input"><label class="swal2-label">Unidad (UM)</label><input id="swal-um" type="text" value="${it.um}" class="swal2-input">`,
+    preConfirm: () => {
+      const v = Number(document.getElementById('swal-cant').value || 0);
+      const um = document.getElementById('swal-um').value || 'UNIDAD';
+      if (!v || v <= 0) Swal.showValidationMessage('Cantidad inválida');
+      return { v, um };
+    }
+  }).then(res => { if (res.isConfirmed) { it.cantidad = Number(res.value.v); it.um = res.value.um; Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Actualizado', timer: 1000, showConfirmButton: false }); } });
+};
+
+const removeDraftItem = (id) => {
+  Swal.fire({ title: '¿Eliminar item?', text: 'Se quitará del borrador.', icon: 'question', showCancelButton: true, confirmButtonText: 'Sí, eliminar', cancelButtonText: 'Cancelar' }).then(r => { if (r.isConfirmed) { draft.value = draft.value.filter(d => d.id !== id); Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Eliminado', timer: 900, showConfirmButton: false }); } });
+};
+
+const moveDraftItem = (id, dir) => {
+  const idx = draft.value.findIndex(i => i.id === id); if (idx === -1) return; const newIdx = idx + (dir === 'up' ? -1 : 1); if (newIdx < 0 || newIdx >= draft.value.length) return; const arr = draft.value; const [item] = arr.splice(idx, 1); arr.splice(newIdx, 0, item); draft.value = [...arr];
+};
+
+const clearDraft = () => { draft.value = []; resetProductFields(); };
+
+/* ---------- Finalizar guardado ---------- */
+const showValidationErrors = (errs) => {
+  const items = Object.keys(errs || {}).map(f => errs[f].map(m => `<li><strong>${f}:</strong> ${m}</li>`).join('')).join('');
+  const html = `<ul style="text-align:left; margin:0; padding-left:1em;">${items}</ul>`;
+  Swal.fire({ title: 'Errores de validación', html, icon: 'error' });
+};
+
+const finalizeSave = async (options = { maintain: false }) => {
+  if (!draft.value.length) { Swal.fire('Borrador vacío', 'Agrega al menos un item antes de finalizar.', 'warning'); return; }
+  if (!form.nombre || !form.lugar || !form.distrito) { Swal.fire('Falta información', 'Completa nombre, lugar y distrito.', 'warning'); return; }
+
+  const nActaValue = codigoGenerado.value;
+  const records = draft.value.map(it => ({
+    n_acta: nActaValue,
+    nombre: form.nombre,
+    lugar: form.lugar,
+    distrito: form.distrito,
+    fecha: form.fecha,
+    producto_code: it.producto_code,
+    producto: it.producto,
+    producto_label: it.producto_label || it.producto,
+    um: it.um,
+    cantidad: it.cantidad
+  }));
+
+  const confirmed = await Swal.fire({ title: options.maintain ? 'Guardar y mantener?' : 'Finalizar y guardar?', text: options.maintain ? 'Se guardará la acta y se te entregará un nuevo código.' : 'Se guardará la acta (registrada).', icon: 'question', showCancelButton: true, confirmButtonText: 'Sí, guardar', cancelButtonText: 'Cancelar' });
+  if (!confirmed.isConfirmed) return;
+
+  try {
+    Swal.fire({ title: 'Guardando...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+    const res = await axios.post(`/proyectos/${props.proyecto.id}/salidas`, { items: records, persona_id: form.persona_id, nombre: form.nombre, lugar: form.lugar, distrito: form.distrito });
+    Swal.close();
+    if (res.data?.success) {
+      Swal.fire({ icon: 'success', title: 'Guardado', html: `Acta: <strong>${nActaValue}</strong>` });
+      if (options.maintain) {
+        draft.value = [];
+        resetProductFields();
+        incrementCombinedCode2(1);
+      } else {
+        draft.value = [];
+        form.persona_id = null; form.nombre = ''; form.lugar = ''; form.distrito = ''; form.fecha = new Date().toISOString().slice(0, 10);
+        resetProductFields();
+        incrementCombinedCode2(1);
       }
     } else {
-      productoEncontrado.value = null;
+      Swal.fire('Error', res.data?.error || 'La petición no devolvió success=true', 'error');
     }
+  } catch (error) {
+    Swal.close();
+    if (error.response?.status === 422 && error.response.data?.errors) showValidationErrors(error.response.data.errors);
+    else Swal.fire('Error', 'Ocurrió un problema guardando el borrador. Revisa la consola.', 'error');
   }
-);
+};
 
-// -----------------------------
-// GUARDAR SALIDA (recarga la página)
-// -----------------------------
-const guardarSalida = async () => {
-  // 🔒 Restricción por rol
-  if (user.role !== 'admin' && user.role !== 'equipo') {
-    Swal.fire('🚫 Permiso denegado', 'No tienes permiso para registrar salidas.', 'error');
+/* ---------- Código acta helpers (números) ---------- */
+const codeParts2 = ['codigo1', 'codigo2'];
+const codeSizes2 = [3, 4];
+const totalCodeLength2 = codeSizes2.reduce((a, b) => a + b, 0);
+const getCombinedCodeString2 = () => codeParts2.map((p, i) => String(form[p] || '').padStart(codeSizes2[i], '0')).join('');
+const setCombinedCodeFromNumber2 = (num) => {
+  const s = String(num).padStart(totalCodeLength2, '0'); let pos = 0;
+  codeParts2.forEach((p, i) => { const len = codeSizes2[i]; form[p] = s.slice(pos, pos + len); pos += len; });
+};
+const incrementCombinedCode2 = (delta = 1) => {
+  if (codeSizes2.length === 2 && codeSizes2[1] === 4) {
+    const cur1 = parseInt(String(form.codigo1 || '0').replace(/\D/g, ''), 10) || 0;
+    let nxt1 = cur1 + delta;
+    if (nxt1 < 0) nxt1 = 0;
+    const limit1 = Math.pow(10, codeSizes2[0]) - 1;
+    if (nxt1 > limit1) nxt1 = limit1;
+    form.codigo1 = String(nxt1).padStart(codeSizes2[0], '0');
     return;
   }
+  const cur = parseInt(getCombinedCodeString2().replace(/\D/g, ''), 10) || 0;
+  const nxt = cur + delta;
+  setCombinedCodeFromNumber2(nxt);
+};
 
-  // Validación mínima de campos
-  if (!form.value.nombre || !form.value.lugar || !form.value.distrito || !form.value.fecha || !form.value.producto) {
-    Swal.fire('⚠️ Campos incompletos', 'Por favor, complete todos los campos requeridos.', 'warning');
-    return;
-  }
+/* ----------------- acta PDF (v2) ------------------------*/
+function actaPdf_escapeHtml(unsafe) {
+  if (unsafe === null || typeof unsafe === 'undefined') return '';
+  return String(unsafe)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
 
-  // Validación opcional: cantidad vs stock
-  if (productoEncontrado.value && Number(form.value.cantidad) > Number(productoEncontrado.value.stock)) {
-    Swal.fire('⚠️ Stock insuficiente', 'La cantidad supera el stock disponible.', 'warning');
-    return;
-  }
+function actaPdf2_generateActaHTML({ nActa, nombre, lugar, distrito, fecha, items, proyectoNombre, logoData = null }) {
+  const rows = (items || []).map((it) => {
+    const productoLabel = actaPdf_escapeHtml(it.producto_label || it.producto || it.producto_code || '—');
+    const um = actaPdf_escapeHtml(it.um || '—');
+    const qty = actaPdf_escapeHtml(Number(it.cantidad || 0));
+    return `<tr>
+      <td style="padding:6px;vertical-align:top">${productoLabel}</td>
+      <td class="unit-col" style="padding:6px;text-align:center;vertical-align:top">${um}</td>
+      <td class="qty-col" style="padding:6px;text-align:center;vertical-align:top">${qty}</td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="3" style="padding:8px;text-align:center;color:#666">No hay items</td></tr>`;
 
-  Swal.fire({
-    title: '¿Registrar salida?',
-    text: 'Se descontará del stock.',
-    icon: 'question',
-    showCancelButton: true,
-    confirmButtonText: 'Sí, guardar',
-    cancelButtonText: 'Cancelar'
-  }).then(async (result) => {
-    if (!result.isConfirmed) return;
+  const css = `
+    html,body{margin:0;padding:0;background:#f2f2f2}
+    body{display:flex;justify-content:center;padding:10mm 0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,Helvetica,sans-serif}
+    .paper{width:210mm;min-height:297mm;background:#fff;padding:18mm;box-shadow:0 6px 18px rgba(0,0,0,0.08);border-radius:4px;border:1px solid #e2e6ef;box-sizing:border-box;color:#222}
+    header{display:flex;justify-content:space-between;margin-bottom:6px;align-items:flex-start}
+    .left-meta{display:flex;align-items:flex-start;gap:12px}
+    .logo{width:60px;height:60px;border-radius:6px;background:#1e4ea8;flex-shrink:0;overflow:hidden}
+    .org-data{font-size:12px;color:#333}
+    .org-title{font-weight:bold;font-size:14px;margin-bottom:4px}
+    .right-meta{text-align:right;color:#555;font-size:12px}
+    h1{text-align:center;color:#1e4ea8;margin:6px 0 12px 0;font-size:18px;letter-spacing:0.4px}
+    .intro{font-size:12px;color:#333;line-height:1.45;margin-bottom:8px}
+    .checkboxes{margin:8px 0 12px 0;font-size:12px;color:#2b2b2b}
+    .doc-table{width:100%;border-collapse:collapse;margin-top:6px;margin-bottom:10px;font-size:12px;table-layout:fixed;line-height:1.1}
+    .doc-table th,.doc-table td{border:1px solid #333;padding:6px 8px;vertical-align:top;text-align:left;word-break:break-word;overflow-wrap:break-word}
+    .doc-table th{background:#e6eefc;text-align:left;font-weight:600}
+    .unit-col,.qty-col{text-align:center;width:80px}
+    .sign-row{display:flex;gap:18px;justify-content:space-between;margin-top:18px;flex-wrap:wrap;align-items:flex-start}
+    .sign-box{flex:1 1 44%;max-width:44%;min-width:200px;background:transparent;padding-top:36px;padding-bottom:6px;padding-left:8px;padding-right:8px;box-sizing:border-box;position:relative}
+    .sign-line{width:60%;margin:0 auto 6px auto;border-top:1.25px solid #000;height:0;box-sizing:border-box}
+    .sign-box .sign-meta { text-align:center !important; margin:0 0 6px 0; font-size:0.75rem; line-height:1.05; padding:0; font-weight:700; letter-spacing:0.6px; }
+    .field-row{display:flex;align-items:center;gap:12px;margin:8px 0}
+    .field-label{width:36%;min-width:100px;font-weight:600;font-size:0.86rem;text-align:left;color:#333}
+    .field-value{flex:1;min-height:20px;border-bottom:1px solid #000;box-sizing:border-box;padding:4px 6px;white-space:nowrap;overflow:hidden}
+    .smallnote{font-size:11px;color:#666;margin-top:6px}
+    tbody tr td{page-break-inside:avoid}
+    @media print{body{padding:0}.paper{box-shadow:none;border:none}@page{size:A4;margin:10mm}.doc-table{font-size:10px}.doc-table th,.doc-table td{padding:4px 6px}}
+  `;
 
-    cargando.value = true;
-    try {
-      form.value.n_acta = codigoGenerado.value;
+  const introText = `En la localidad de <strong>${actaPdf_escapeHtml(lugar)}</strong>, distrito de <strong>${actaPdf_escapeHtml(distrito)}</strong>, siendo las <strong>.............</strong> horas del día <strong>${actaPdf_escapeHtml(fecha)}</strong>, se hace entrega a <strong>${actaPdf_escapeHtml(nombre)}</strong> lo que se detalla en líneas:`;
 
-      const res = await axios.post(`/proyectos/${props.proyecto.id}/salidas`, form.value);
+  const checksHtml = `
+    <div class="checkboxes">
+      <p style="margin-top:10px">Posteriores y en los términos siguientes:</p>
+      <ul>
+        <li>Será utilizado únicamente en los trabajos del proyecto.</li>
+        <li>Responsabilidad del uso adecuado de lo recibido.</li>
+        <li>Uso para promotoría/asesoría/capacitación cuando aplique.</li>
+      </ul>
+    </div>
+  `;
+  const Htmlmarca = `
+  <div style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.8; max-width: 600px; margin-top:10px">
+  <p>Y considerando lo siguiente, marque con una X lo que corresponda:</p>
 
-      if (res.data?.success) {
-        Swal.fire('✅ Registrado', 'Salida registrada correctamente. Stock actualizado.', 'success').then(() => {
-          // 🔄 recarga la página para limpiar el formulario
-          window.location.reload();
-        });
-      } else {
-        Swal.fire('⚠️ Error', res.data?.error || 'Ocurrió un error', 'error');
-      }
-    } catch (error) {
-      console.error('❌ Error en backend:', error.response?.data || error);
-      Swal.fire('❌ Error', 'Ocurrió un problema al registrar la salida.', 'error');
-    } finally {
-      cargando.value = false;
-    }
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+    <span>La entrega - recepción es a título personal/familiar</span>
+    <div style="width: 18px; height: 18px; border: 2px solid #2a4d9b; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;"></div>
+  </div>
+
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+    <span>La entrega - recepción es para varias familias y/o como comunidad</span>
+    <div style="width: 18px; height: 18px; border: 2px solid #2a4d9b;"></div>
+  </div>
+
+  <div style="display: flex; justify-content: space-between; align-items: center;">
+    <span>La entrega - recepción es para realizar trabajos en promotoría / asesoría / capacitación</span>
+    <div style="width: 18px; height: 18px; border: 2px solid #2a4d9b;"></div>
+  </div>
+</div>
+
+  `;
+
+  return `<!doctype html>
+  <html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <title>Acta de Entrega - Recepción - ${actaPdf_escapeHtml(nActa || '')}</title>
+    <style>${css}</style>
+  </head>
+  <body>
+    <div class="paper">
+      <header>
+        <div class="left-meta">
+          <div class="logo">${logoData ? `<img src="${actaPdf_escapeHtml(logoData)}" alt="logo">` : ''}</div>
+          <div class="org-data">
+            <div class="org-title">Islas de Paz Perú</div>
+            <div style="font-size:12px;color:#444">RUC: <strong>20600630769</strong></div>
+            <div style="font-size:12px;color:#444">Organización no Gubernamental</div>
+            <div style="font-size:12px;color:#444">Dirección Jr. Faustino Sánchez Carrión N° 117, Amarilis - Huánuco</div>
+          </div>
+        </div>
+        <div class="right-meta">
+          <div><strong>Número:</strong> ${actaPdf_escapeHtml(nActa || '')}</div>
+          <div><strong>Proyecto:</strong> ${actaPdf_escapeHtml(proyectoNombre || '')}</div>
+        </div>
+      </header>
+
+      <h1>ACTA DE ENTREGA - RECEPCIÓN</h1>
+
+      <div class="intro">${introText}</div>
+
+      ${checksHtml}
+      ${Htmlmarca}
+
+      <table class="doc-table">
+        <thead>
+          <tr>
+            <th>DETALLE DE LA ENTREGA-RECEPCIÓN</th>
+            <th class="unit-col">UNIDAD DE MEDIDA</th>
+            <th class="qty-col">CANTIDAD</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+
+      <div class="smallnote">En señal de conformidad de entrega y recepción, firman todos los presentes.</div>
+
+      <div class="sign-row">
+        <div class="sign-box" id="sign-entrego-box">
+          <div class="sign-line"></div>
+          <div class="sign-meta"><strong>ENTREGÓ CONFORME</strong></div>
+          <div class="field-row"><div class="field-label">NOMBRES:</div><div class="field-value"></div></div>
+          <div class="field-row"><div class="field-label">APELLIDOS:</div><div class="field-value"></div></div>
+          <div class="field-row"><div class="field-label">DNI:</div><div class="field-value"></div></div>
+        </div>
+
+        <div class="sign-box" id="sign-recibio-box">
+          <div class="sign-line"></div>
+          <div class="sign-meta"><strong>RECIBIÓ CONFORME</strong></div>
+          <div class="field-row"><div class="field-label">NOMBRES:</div><div class="field-value"></div></div>
+          <div class="field-row"><div class="field-label">APELLIDOS:</div><div class="field-value"></div></div>
+          <div class="field-row"><div class="field-label">DNI:</div><div class="field-value"></div></div>
+        </div>
+      </div>
+    </div>
+  </body>
+  </html>`;
+}
+
+function actaPdf2_onGenerateActaImmediate() {
+  const w = window.open('', '_blank', 'noopener,noreferrer');
+  if (!w) { Swal.fire('Error', 'Permite popups y vuelve a intentarlo.', 'error'); return; }
+  try { w.document.open(); w.document.write('<!doctype html><html><head><meta charset="utf-8"/><title>Generando acta...</title></head><body><p style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,Helvetica,sans-serif;padding:16px;">Generando acta, espera...</p></body></html>'); w.document.close(); w.focus(); } catch (err) { }
+  if (!form.nombre || !form.lugar || !form.distrito) { try { w.close(); } catch (e) { }; Swal.fire('Falta información', 'Completa nombre, lugar y distrito antes de generar el acta.', 'warning'); return; }
+  if (!draft.value.length) { try { w.close(); } catch (e) { }; Swal.fire('Borrador vacío', 'Agrega al menos un item al borrador antes de generar el acta.', 'warning'); return; }
+
+  const nActaValue = codigoGenerado.value;
+  const html = actaPdf2_generateActaHTML({
+    nActa: nActaValue,
+    nombre: form.nombre,
+    lugar: form.lugar,
+    distrito: form.distrito,
+    fecha: form.fecha,
+    items: draft.value,
+    proyectoNombre: props.proyecto?.nombre || ''
   });
-};
 
-// -----------------------------
-// GUARDAR “MANTENER” (incrementa código2, no recarga)
-// -----------------------------
-const guardarSalidaIncrementandoCodigo = async () => {
-  // 🔒 Restricción por rol
-  if (user.role !== 'admin' && user.role !== 'equipo') {
-    Swal.fire('🚫 Permiso denegado', 'No tienes permiso para registrar salidas.', 'error');
-    return;
+  try {
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(() => { try { w.print(); } catch (err) { } }, 300);
+  } catch (err) {
+    try { w.close(); } catch (e) { }
+    Swal.fire('Error', 'No se pudo generar la vista imprimible.', 'error');
   }
+}
 
-  // Validación mínima de campos
-  if (!form.value.nombre || !form.value.lugar || !form.value.distrito || !form.value.fecha || !form.value.producto) {
-    Swal.fire('⚠️ Campos incompletos', 'Por favor, complete todos los campos requeridos.', 'warning');
-    return;
-  }
+function actaPdf2_downloadHtmlFile() {
+  if (!form.nombre || !form.lugar || !form.distrito) { Swal.fire('Falta información', 'Completa nombre, lugar y distrito.', 'warning'); return; }
+  if (!draft.value.length) { Swal.fire('Borrador vacío', 'Agrega items antes de generar el acta.', 'warning'); return; }
 
-  // Validación opcional: cantidad vs stock
-  if (productoEncontrado.value && Number(form.value.cantidad) > Number(productoEncontrado.value.stock)) {
-    Swal.fire('⚠️ Stock insuficiente', 'La cantidad supera el stock disponible.', 'warning');
-    return;
-  }
-
-  Swal.fire({
-    title: '¿Registrar salida y mantener datos?',
-    text: 'Se descontará del stock y se incrementará el código.',
-    icon: 'question',
-    showCancelButton: true,
-    confirmButtonText: 'Sí, guardar',
-    cancelButtonText: 'Cancelar'
-  }).then(async (result) => {
-    if (!result.isConfirmed) return;
-
-    cargando.value = true;
-    try {
-      form.value.n_acta = codigoGenerado.value;
-
-      const res = await axios.post(`/proyectos/${props.proyecto.id}/salidas`, form.value);
-
-      if (res.data?.success) {
-        Swal.fire('✅ Registrado', 'Salida registrada correctamente.', 'success');
-
-        // Mantener: incrementa el código2; limpia campos puntuales
-        const codigo2Num = parseInt(form.value.codigo2 || '0', 10) + 1;
-        form.value.codigo2 = String(codigo2Num).padStart(3, '0');
-
-        // Limpieza parcial
-        form.value.producto = '';
-        form.value.cantidad = 1;
-      } else {
-        Swal.fire('⚠️ Error', res.data?.error || 'Ocurrió un error', 'error');
-      }
-    } catch (error) {
-      console.error('❌ Error en backend:', error.response?.data || error);
-      Swal.fire('❌ Error', 'Ocurrió un problema al registrar la salida.', 'error');
-    } finally {
-      cargando.value = false;
-    }
+  const nActaValue = codigoGenerado.value;
+  const html = actaPdf2_generateActaHTML({
+    nActa: nActaValue,
+    nombre: form.nombre,
+    lugar: form.lugar,
+    distrito: form.distrito,
+    fecha: form.fecha,
+    items: draft.value,
+    proyectoNombre: props.proyecto?.nombre || ''
   });
-};
 
+  const blob = new Blob([html], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${nActaValue}.html`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
-// -----------------------------
-// UTILIDADES
-// -----------------------------
-const volverATabla = () => {
-  window.location.href = `/proyectos/${props.proyecto.id}/inventario-salidas`;
-};
-
-const autocompletarPersona = () => {
-  const persona = personas.value.find((p) => p.nombre === form.value.nombre);
-  if (persona) {
-    form.value.lugar = persona.lugar;
-    form.value.distrito = persona.distrito;
+async function actaPdf2_downloadPdfFile() {
+  // Validaciones previas (igual que antes)
+  if (!form.nombre || !form.lugar || !form.distrito) {
+    Swal.fire('Falta información', 'Completa nombre, lugar y distrito.', 'warning');
+    return;
   }
+  if (!draft.value.length) {
+    Swal.fire('Borrador vacío', 'Agrega items antes de generar el acta.', 'warning');
+    return;
+  }
+
+  const nActaValue = codigoGenerado.value || 'acta';
+  const html = actaPdf2_generateActaHTML({
+    nActa: nActaValue,
+    nombre: form.nombre,
+    lugar: form.lugar,
+    distrito: form.distrito,
+    fecha: form.fecha,
+    items: draft.value,
+    proyectoNombre: props.proyecto?.nombre || ''
+  });
+
+  // Crea un contenedor oculto para renderizar el HTML
+  const container = document.createElement('div');
+  container.style.position = 'fixed';
+  container.style.left = '-10000px';
+  container.style.top = '0';
+  container.style.width = '210mm'; // ancho A4 para mejor ajuste
+  container.style.boxSizing = 'border-box';
+  container.innerHTML = html;
+  document.body.appendChild(container);
+
+  // Elemento que queremos convertir (la clase .paper dentro del HTML)
+  const elementToPdf = container.querySelector('.paper') || container;
+
+  // Función para cargar html2pdf si no está presente
+  const loadHtml2Pdf = () => new Promise((resolve, reject) => {
+    if (window.html2pdf) return resolve();
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.9.3/html2pdf.bundle.min.js';
+    script.onload = () => {
+      // un pequeño delay para asegurar que todo esté inicializado
+      setTimeout(() => {
+        if (window.html2pdf) resolve();
+        else reject(new Error('html2pdf no inicializó'));
+      }, 100);
+    };
+    script.onerror = () => reject(new Error('No se pudo cargar html2pdf desde CDN'));
+    document.head.appendChild(script);
+    // timeout por si algo va mal
+    setTimeout(() => {
+      if (!window.html2pdf) reject(new Error('Timeout cargando html2pdf'));
+    }, 10000);
+  });
+
+  try {
+    await loadHtml2Pdf();
+
+    const opt = {
+      margin: 10, // mm
+      filename: `${String(nActaValue).replace(/[\\\/:*?"<>|]/g, '_')}.pdf`,
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true, logging: false },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+
+    // html2pdf no siempre devuelve una Promise en todas las versiones, por eso usamos un wrapper
+    await new Promise((resolve, reject) => {
+      try {
+        window.html2pdf()
+          .set(opt)
+          .from(elementToPdf)
+          .save(() => {
+            resolve();
+          });
+      } catch (err) {
+        reject(err);
+      }
+    });
+
+  } catch (err) {
+    console.error('Error generando PDF:', err);
+    Swal.fire(
+      'Error',
+      'No se pudo generar el PDF automáticamente. Se abrirá la vista para imprimir como alternativa.',
+      'error'
+    );
+
+    // Fallback: abrir vista imprimible (igual que tu función onGenerateActaImmediate)
+    try {
+      const w = window.open('', '_blank', 'noopener,noreferrer');
+      if (w) {
+        w.document.open();
+        w.document.write(html);
+        w.document.close();
+        w.focus();
+        setTimeout(() => { try { w.print(); } catch (e) { /* ignore */ } }, 300);
+      } else {
+        Swal.fire('Error', 'Permite popups e inténtalo nuevamente.', 'error');
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  } finally {
+    // Limpieza DOM
+    try { document.body.removeChild(container); } catch (e) { /* ignore */ }
+  }
+}
+
+
+/* ---------- Inventario helpers ---------- */
+const debounce = (fn, wait = 300) => {
+  let t = null;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), wait); };
+};
+
+const fetchInventory = async (query = '') => {
+  inventoryLoading.value = true;
+  inventoryError.value = null;
+  try {
+    const url = `/proyectos/${props.proyecto.id}/productos${query ? ('?q=' + encodeURIComponent(query)) : ''}`;
+    const res = await axios.get(url);
+    inventory.value = Array.isArray(res.data) ? res.data.map(normalizeProduct) : [];
+  } catch (err) {
+    inventoryError.value = err?.response?.data?.message || err?.message || 'Error';
+    inventory.value = [];
+  } finally {
+    inventoryLoading.value = false;
+  }
+};
+
+const debouncedFetchInventory = debounce((q) => { fetchInventory(q); }, 300);
+const openInventory = async () => { showInventoryModal.value = true; inventoryFilter.q = ''; await nextTick(); fetchInventory(); };
+const closeInventory = () => { showInventoryModal.value = false; };
+const selectInventoryProduct = (p) => {
+  const normalized = (p && p.code) ? p : normalizeProduct(p);
+  form.producto_code = normalized.code || normalized.id || '';
+  form.producto_label = normalized.producto || normalized.descripcion || '';
+  form.um = normalized.um || form.um;
+  productoEncontrado.value = normalized;
+  showInventoryModal.value = false;
+  nextTick(() => { const el = document.querySelector('#producto_code'); if (el) el.focus(); });
+};
+
+/* watch inventory filter */
+watch(() => inventoryFilter.q, (q) => { debouncedFetchInventory(String(q || '').trim()); });
+
+const scheduleHidePersonas = () => {
+  // usamos window.setTimeout por claridad y acceso global
+  window.setTimeout(() => {
+    mostrarPersonas.value = false;
+  }, 180);
+};
+
+const scheduleHideSugerencias = () => {
+  window.setTimeout(() => {
+    mostrarSugerencias.value = false;
+  }, 180);
 };
 </script>
 
 <template>
   <AuthenticatedLayout>
-    <div class="max-w-4xl mx-auto mt-6 bg-white dark:bg-gray-800 p-6 rounded shadow">
-      <h1 class="text-2xl font-bold mb-6 text-gray-700 dark:text-gray-200">
-        Registrar Salida
-      </h1>
+    <div class="max-w-7xl mx-auto p-6">
+      <h2 class="text-2xl font-bold mb-4 text-gray-900 dark:text-gray-100">Registrar Salida — formato actualizado</h2>
 
-      <!-- Usamos guardarSalida en el submit -->
-      <form @submit.prevent="guardarSalida" class="space-y-5">
-        <!-- Nº Acta -->
-        <div>
-          <label class="block font-bold mb-1 text-gray-700 dark:text-gray-200">N° Acta</label>
-          <div class="flex items-center gap-2 p-2 border dark:border-gray-700 rounded">
-            <span class="text-gray-500">AE -</span>
-            <input v-model="form.codigo1" type="text" maxlength="3"
-              class="dark:bg-gray-700 dark:text-white w-16 text-center border rounded" required />
-            <span class="text-gray-500">-</span>
-            <input v-model="form.codigo2" type="text" maxlength="3"
-              class="dark:bg-gray-700 dark:text-white w-16 text-center border rounded" required />
+      <div class="grid grid-cols-12 gap-6">
+        <!-- Formulario principal -->
+        <section class="col-span-8 bg-white dark:bg-gray-800 p-6 rounded shadow">
+          <!-- N° Acta -->
+          <div class="mb-4">
+            <label class="block font-semibold mb-1 text-gray-700 dark:text-gray-200">N° Acta</label>
+            <div class="flex items-center gap-2">
+              <span class="px-3 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded">AE -</span>
+
+              <input v-model="form.codigo1" maxlength="3" aria-label="Código 1"
+                class="px-3 py-2 rounded w-24 text-center bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+
+              <span class="px-2 text-gray-700 dark:text-gray-300">-</span>
+
+              <input v-model="form.codigo2" maxlength="4" aria-label="Código 2"
+                class="px-3 py-2 rounded w-28 text-center bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+
+              <div class="ml-4 text-sm text-gray-600 dark:text-gray-300">
+                Código generado: <strong class="text-gray-900 dark:text-gray-100">{{ codigoGenerado }}</strong>
+              </div>
+            </div>
           </div>
-          <p class="text-sm text-gray-500 mt-1">
-            Código generado: <strong>{{ codigoGenerado }}</strong>
-          </p>
-        </div>
 
-        <!-- Nombre -->
-        <div>
-          <label class="block font-bold mb-1 dark:text-gray-200">Nombre</label>
-          <input v-model="form.nombre" type="text" list="personasList" @change="autocompletarPersona"
-            class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white" required />
-          <datalist id="personasList">
-            <option v-for="p in personas" :key="p.id" :value="p.nombre" />
-          </datalist>
-        </div>
+          <!-- Persona (predictivo) -->
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block font-semibold mb-1 text-gray-700 dark:text-gray-200">Nombre / Persona</label>
 
-        <!-- Lugar -->
-        <div>
-          <label class="block font-bold mb-1 dark:text-gray-200">Lugar</label>
-          <input v-model="form.lugar" type="text" class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white"
-            required />
-        </div>
+              <div class="relative">
+                <div class="flex gap-2">
+                  <input id="persona_nombre" v-model="form.nombre" @input="onPersonaInput"
+                    @focus="mostrarPersonas = String(form.nombre || '').trim().length > 0" @blur="scheduleHidePersonas"
+                    placeholder="Escribe nombre de persona..."
+                    class="w-full p-2 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-700 focus:outline-none"
+                    autocomplete="off" />
 
-        <!-- Distrito -->
-        <div>
-          <label class="block font-bold mb-1 dark:text-gray-200">Distrito</label>
-          <input v-model="form.distrito" type="text" class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white"
-            required />
-        </div>
+                  <button type="button" @click="mostrarPersonas = !mostrarPersonas"
+                    class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                    aria-label="Mostrar personas">
+                    Personas
+                  </button>
+                </div>
 
-        <!-- Fecha -->
-        <div>
-          <label class="block font-bold mb-1 text-gray-700 dark:text-gray-200">Fecha</label>
-          <input v-model="form.fecha" type="date" class="dark:bg-gray-700 dark:text-white w-full border rounded p-2"
-            required />
-        </div>
+                <!-- Predictivo personas -->
+                <ul v-if="mostrarPersonas && personasFiltradas.length > 0"
+                  class="absolute z-10 dark:text-white bg-white dark:bg-gray-700 border rounded w-full mt-1 max-h-40 overflow-auto shadow-lg">
+                  <li v-for="p in personasFiltradas" :key="p.id" @mousedown.prevent="seleccionarPersona(p)"
+                    class="p-2 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600">
+                    {{ p.nombre }} <span class="text-xs text-gray-500 dark:text-gray-400">— {{ p.distrito || p.lugar ||
+                      '' }}</span>
+                  </li>
+                </ul>
+              </div>
 
-        <!-- Código de Producto -->
-        <div>
-          <label class="block font-bold mb-1 text-gray-700 dark:text-gray-200">Código de Producto</label>
-          <input v-model="form.producto" type="text" class="dark:bg-gray-700 dark:text-white w-full border rounded p-2"
-            required />
+              <!-- hidden persona_id (se queda vacío si es persona nueva) -->
+              <input type="hidden" :value="form.persona_id" />
+            </div>
 
-          <!-- Info del producto -->
-          <div v-if="productoEncontrado"
-            class="mt-3 p-3 border rounded bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-50">
-            <p><strong>Descripción:</strong> {{ productoEncontrado.descripcion }}</p>
-            <p><strong>Categoría:</strong> {{ productoEncontrado.categoria }}</p>
-            <p><strong>Stock:</strong> {{ productoEncontrado.stock }}</p>
-            <p><strong>Unidad de medida:</strong> {{ productoEncontrado.um }}</p>
+            <!-- Lugar y distrito -->
+            <div>
+              <label class="block font-semibold mb-1 text-gray-700 dark:text-gray-200">Lugar</label>
+              <input v-model="form.lugar"
+                class="w-full p-2 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-700 focus:outline-none" />
+
+              <label class="block font-semibold mt-3 mb-1 text-gray-700 dark:text-gray-200">Distrito</label>
+              <input v-model="form.distrito"
+                class="w-full p-2 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-700 focus:outline-none" />
+            </div>
           </div>
-        </div>
 
-        <!-- Cantidad -->
-        <div>
-          <label class="block font-bold mb-1 text-gray-700 dark:text-gray-200">Cantidad</label>
-          <input v-model="form.cantidad" type="number" min="1"
-            class="dark:bg-gray-700 dark:text-white w-full border rounded p-2" required />
-        </div>
+          <!-- Fecha -->
+          <div class="mt-4">
+            <label class="block font-semibold mb-1 text-gray-700 dark:text-gray-200">Fecha</label>
+            <input v-model="form.fecha" type="date"
+              class="p-2 rounded bg-white dark:bg-gray-700 w-full text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-700 focus:outline-none" />
+          </div>
 
-        <!-- Botones -->
-        <div class="flex justify-between items-start mt-6">
-          <!-- Grupo de acciones principales -->
-          <div class="flex flex-col sm:flex-row gap-3">
-            <button type="submit" :disabled="cargando"
-              class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50">
-              {{ cargando ? 'Guardando...' : 'Guardar' }}
+          <hr class="my-4 border-gray-200 dark:border-gray-700" />
+
+          <!-- Producto -->
+          <div class="grid grid-cols-4 gap-3 items-end">
+            <div class="col-span-2">
+              <label class="block font-semibold mb-1 text-gray-700 dark:text-gray-200">Código / Producto</label>
+              <div class="flex gap-2 relative">
+                <input id="producto_code" v-model="form.producto_code" @input="onProductoInput"
+                  @focus="mostrarSugerencias = String(form.producto_code || '').trim().length > 0"
+                  @blur="scheduleHideSugerencias" placeholder="Escribe código o nombre..."
+                  class="w-full p-2 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-700 focus:outline-none" />
+                <button type="button" @click="openInventory"
+                  class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                  Inventario
+                </button>
+
+                <!-- Predictivo productos (local) -->
+                <ul v-if="mostrarSugerencias && productosFiltrados.length > 0"
+                  class="absolute z-10 dark:text-white bg-white dark:bg-gray-700 border rounded w-full mt-1 max-h-40 overflow-auto shadow-lg">
+                  <li v-for="p in productosFiltrados" :key="p.code || p.raw?.id"
+                    @mousedown.prevent="seleccionarProducto(p)"
+                    class="p-2 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600">
+                    {{ p.producto || p.descripcion || p.code }}
+                  </li>
+                </ul>
+              </div>
+
+              <!-- Resumen del producto elegido -->
+              <div v-if="form.producto_label" class="col-span-4">
+                <label class="block font-semibold mb-1 text-gray-700 dark:text-gray-200">
+                  Producto seleccionado
+                </label>
+                <div class="p-3 rounded bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600">
+                  <div class="text-base font-medium text-gray-900 dark:text-gray-100">
+                    {{ form.producto_label }}
+                  </div>
+                  <div class="text-sm text-gray-600 dark:text-gray-300">
+                    Código: <strong>{{ form.producto_code }}</strong> • UM: <strong>{{ form.um || '—' }}</strong>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+
+            <!-- Cantidad -->
+            <div>
+              <label class="block font-semibold mb-1 text-gray-700 dark:text-gray-200">Cantidad</label>
+              <div class="flex gap-2 items-center">
+                <input type="number" min="0.0001" step="0.0001" v-model.number="form.cantidad"
+                  class="w-full p-2 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-700 focus:outline-none" />
+                <div
+                  class="px-3 py-2 border rounded bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-gray-100">
+                  {{ form.um || 'UN' }}
+                </div>
+              </div>
+            </div>
+
+            <!-- UM y acciones -->
+            <div>
+              <div class="mt-2 flex gap-2">
+                <button type="button" @click="addToDraft"
+                  class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-300">
+                  Agregar
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Botones principales -->
+          <div class="mt-6 flex gap-3">
+            <button @click="finalizeSave({ maintain: false })"
+              class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded focus:outline-none focus:ring-2 focus:ring-green-300">
+              Finalizar y Guardar
             </button>
 
-            <button type="button" @click="guardarSalidaIncrementandoCodigo"
-              class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-700">
-              Mantener
+            <button @click="clearDraft"
+              class="bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 px-4 py-2 rounded text-gray-800 dark:text-gray-100 focus:outline-none">
+              Limpiar borrador
             </button>
-          </div>
 
-          <!-- Botón volver -->
-          <button type="button" @click="volverATabla"
-            class="bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-700">
-            Volver
-          </button>
+          </div>
+        </section>
+
+        <!-- Panel derecho (borrador) -->
+        <aside class="col-span-4">
+          <div class="bg-white dark:bg-gray-900 p-4 rounded shadow mb-4">
+            <h3 class="font-bold mb-2 text-gray-900 dark:text-gray-100">Borrador de Acta</h3>
+
+            <div class="text-sm text-gray-600 dark:text-gray-300 mb-3">
+              Acta provisional: <strong class="text-gray-900 dark:text-gray-100">{{ codigoGenerado }}</strong>
+            </div>
+
+            <div v-if="!draft.length"
+              class="p-4 text-sm text-gray-500 dark:text-gray-400 border rounded bg-gray-50 dark:bg-gray-800">
+              Aún no hay items en el borrador.
+            </div>
+
+            <ul v-else class="space-y-2 max-h-56 overflow-auto">
+              <li v-for="(it, idx) in draft" :key="it.id"
+                class="flex items-center justify-between p-2 border rounded bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700">
+                <div>
+                  <div class="font-medium text-gray-900 dark:text-gray-100">
+                    {{ idx + 1 }}. {{ it.producto }} <span class="text-xs text-gray-500 dark:text-gray-400">({{ it.um
+                    }})</span>
+                  </div>
+                  <div class="text-sm text-gray-500 dark:text-gray-400">
+                    Código: {{ it.producto_code }} — Cant: <strong>{{ it.cantidad }}</strong>
+                  </div>
+                </div>
+
+                <div class="flex flex-col items-end gap-1">
+                  <div class="flex gap-1">
+                    <button @click="moveDraftItem(it.id, 'up')"
+                      class="px-2 py-1 text-xs border rounded bg-white dark:bg-gray-700">↑</button>
+                    <button @click="moveDraftItem(it.id, 'down')"
+                      class="px-2 py-1 text-xs border rounded bg-white dark:bg-gray-700">↓</button>
+                    <button @click="editDraftItem(it.id)"
+                      class="px-2 py-1 text-xs border rounded bg-white dark:bg-gray-700">✏️</button>
+                    <button @click="removeDraftItem(it.id)"
+                      class="px-2 py-1 text-xs border rounded text-red-600 bg-white dark:bg-gray-700">🗑</button>
+                  </div>
+                </div>
+              </li>
+            </ul>
+
+            <div class="mt-3 border-t pt-3 border-gray-200 dark:border-gray-700">
+              <div class="text-sm text-gray-600 dark:text-gray-300">Líneas: <strong>{{ draftTotals.lines }}</strong>
+              </div>
+              <div class="text-sm text-gray-600 dark:text-gray-300">Total cantidad (suma numérica): <strong>{{
+                draftTotals.totalQty }}</strong></div>
+
+              <div class="mt-3">
+                <button @click="finalizeSave({ maintain: false })"
+                  class="w-full bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-green-300">
+                  Finalizar y Guardar
+                </button>
+              </div>
+
+              <div class="mt-2">
+                <button @click="actaPdf2_downloadHtmlFile()"
+                  class="w-full bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-purple-300">
+                  Generar Acta (Plantilla)
+                </button>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <!-- Modal Inventario (fuera del grid para evitar overflow) -->
+      <div v-if="showInventoryModal" class="fixed inset-0 z-50 flex items-start justify-center p-6" role="dialog"
+        aria-modal="true" aria-label="Modal de Inventario">
+        <div class="absolute inset-0 bg-black/40" @click="closeInventory"></div>
+
+        <div class="relative w-full max-w-3xl bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden">
+          <header class="p-4 border-b dark:border-gray-700 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Buscar en Inventario — {{
+                proyecto.nombre }}</h3>
+              <span v-if="inventoryLoading" class="text-sm text-gray-500 dark:text-gray-400">Cargando…</span>
+            </div>
+            <button @click="closeInventory"
+              class="px-3 py-1 rounded bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-100">Cerrar</button>
+          </header>
+
+          <div class="p-4">
+            <div class="flex gap-2 mb-3">
+              <input v-model="inventoryFilter.q" placeholder="Buscar por código, nombre o descripción..."
+                class="flex-1 p-2 border rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 border-gray-200 dark:border-gray-700 focus:outline-none" />
+              <button @click="fetchInventory(inventoryFilter.q)"
+                class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded">Buscar</button>
+            </div>
+
+            <div v-if="inventoryError" class="text-sm text-red-600 mb-2">{{ inventoryError }}</div>
+            <div v-if="inventoryLoading" class="text-sm  mb-2 text-gray-700 dark:text-gray-300">Cargando inventario…
+            </div>
+
+            <div v-if="!inventoryLoading && inventory.length === 0"
+              class="p-4 text-sm text-gray-500 dark:text-gray-400 border rounded bg-gray-50 dark:bg-gray-800">
+              Inventario vacío.
+            </div>
+
+            <ul v-if="filteredInventory.length" class="max-h-72 overflow-auto space-y-2">
+              <li v-for="item in filteredInventory" :key="item.code || item.id"
+                class="p-2 border rounded flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700 bg-white dark:bg-gray-800">
+                <div>
+                  <div class="font-medium text-gray-900 dark:text-gray-100">{{ item.producto || item.descripcion ||
+                    item.code }}</div>
+                  <div class="text-xs text-gray-500 dark:text-gray-400">
+                    Código: {{ item.code || item.id }} • UM: {{ item.um || '—' }} • Stock: <strong>{{ item.stock ?? '—'
+                    }}</strong>
+                  </div>
+                </div>
+
+                <div class="flex items-center gap-2">
+                  <button @click="selectInventoryProduct(item)"
+                    class="px-3 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-sm focus:outline-none">Seleccionar</button>
+                </div>
+              </li>
+            </ul>
+            <div v-else-if="!inventoryLoading"
+              class="p-4 text-sm text-gray-500 dark:text-gray-400 border rounded bg-gray-50 dark:bg-gray-800">
+              No hay coincidencias en el inventario.
+            </div>
+          </div>
         </div>
-      </form>
+      </div>
     </div>
   </AuthenticatedLayout>
 </template>

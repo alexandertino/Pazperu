@@ -27,11 +27,11 @@ class ProyectoController extends Controller
             'fecha_fin' => $request->estado === 'Terminado' ? now() : null,
         ]);
 
-        // Formato del nombre de tabla
-        $tableInventario = 'inventario_proyecto_' . strtolower(str_replace(' ', '_', $request->nombre));
-        $tableSalidas    = 'salidas_proyecto_' . strtolower(str_replace(' ', '_', $request->nombre));
+        // Normalizar el nombre para usar en tablas
+        $tableSuffix = strtolower(str_replace(' ', '_', $request->nombre));
 
-        // Crear tabla Inventarios
+        // Inventario
+        $tableInventario = 'inventario_proyecto_' . $tableSuffix;
         if (!Schema::hasTable($tableInventario)) {
             Schema::create($tableInventario, function (Blueprint $table) {
                 $table->id();
@@ -50,25 +50,88 @@ class ProyectoController extends Controller
             });
         }
 
-        // Crear tabla Salidas
+        // Salidas
+        $tableSalidas = 'salidas_proyecto_' . $tableSuffix;
         if (!Schema::hasTable($tableSalidas)) {
             Schema::create($tableSalidas, function (Blueprint $table) {
                 $table->id();
-                $table->string('n_acta');
-                $table->string('nombre');
-                $table->string('lugar');
-                $table->string('distrito');
+                $table->string('n_acta')->index();
+                $table->unsignedBigInteger('persona_id')->nullable()->index();
+                $table->string('nombre')->nullable();
+                $table->string('lugar')->nullable();
+                $table->string('distrito')->nullable();
+                $table->date('fecha')->nullable();
+                $table->string('producto')->nullable()->index();
+                $table->string('producto_code', 120)->nullable()->index();
+                $table->string('producto_label', 255)->nullable();
+                $table->string('um', 50)->nullable();
+                $table->decimal('cantidad', 20, 4)->default(0);
+                $table->string('estado', 50)->default('pendiente')->index();
+                $table->timestamps();
+                $table->index(['producto_code', 'fecha']);
+            });
+        }
+
+        $tableCaja = 'am_caja_proyecto_' . $tableSuffix;
+        if (!Schema::hasTable($tableCaja)) {
+            Schema::create($tableCaja, function (Blueprint $table) {
+                $table->id();
+                $table->string('n_acta')->nullable()->index();
                 $table->date('fecha');
-                $table->string('producto');
-                $table->integer('cantidad');
+                $table->string('descripcion', 64);
+                $table->string('presupuestario')->nullable();
+                $table->string('actividad')->nullable();
+                $table->decimal('ingresos', 15, 2)->default(0);
+                $table->decimal('egresos', 15, 2)->default(0);
+                $table->decimal('saldo', 15, 2)->default(0);
                 $table->timestamps();
             });
         }
 
-        
+        // 2. AM-banco
+        $tableBanco = 'am_banco_proyecto_' . $tableSuffix;
+        if (!Schema::hasTable($tableBanco)) {
+            Schema::create($tableBanco, function (Blueprint $table) {
+                $table->id();
+                $table->string('n_acta')->nullable()->index();
+                $table->date('fecha');
+                $table->string('descripcion');
+                $table->string('presupuestario')->nullable();
+                $table->string('actividad')->nullable();
+                $table->decimal('ingresos', 15, 2)->default(0);
+                $table->decimal('egresos', 15, 2)->default(0);
+                $table->decimal('saldo', 15, 2)->default(0);
+                $table->string('accion')->nullable();
+                $table->timestamps();
+            });
+        }
+
+        // 3. Easy
+        $tableEasy = 'easy_proyecto_' . $tableSuffix;
+        if (!Schema::hasTable($tableEasy)) {
+            Schema::create($tableEasy, function (Blueprint $table) {
+                $table->id();
+                $table->string('n_acta')->nullable()->index();
+                $table->string('Cuenta_general')->nullable();
+                $table->decimal('gasto_moneda_local', 15, 2)->default(0);
+                $table->decimal('ingreso_moneda_local', 15, 2)->default(0);
+                $table->string('moneda_facturacion')->nullable();
+                $table->decimal('debito_moneda_gestion', 15, 2)->default(0);
+                $table->decimal('credito_moneda_gestion', 15, 2)->default(0);
+                $table->string('moneda_gestion')->nullable();
+                $table->string('numero_descripcion_pieza')->nullable();
+                $table->string('codigo_presupuestario')->nullable();
+                $table->string('naturaleza_presupuesto')->nullable();
+                $table->string('contrato')->nullable();
+                $table->string('bailleur_fondos')->nullable();
+                $table->date('fecha');
+                $table->timestamps();
+            });
+        }
 
         return redirect()->back()->with('success', 'Proyecto y tablas creados correctamente.');
     }
+
     public function index()
     {
         $proyectos = Proyecto::all();
@@ -77,5 +140,4 @@ class ProyectoController extends Controller
             'proyectos' => $proyectos
         ]);
     }
-
 }

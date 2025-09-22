@@ -9,14 +9,18 @@ use App\Http\Controllers\PersonaController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ProyectoController;
 use App\Http\Controllers\ProyectoExportController;
-use App\Http\Controllers\ReporteController;
+use App\Http\Controllers\SalidaPdfController;
+use App\Http\Controllers\SalidaDebugController;
+use App\Http\Controllers\AmMovimientoController;
+use App\Http\Controllers\ProyectoEasyController;
+use App\Http\Controllers\ProyectoContabilidadExportController;
+use App\Http\Controllers\ExchangeRateController;
 use App\Http\Controllers\CategoriaController;
 use App\Http\Controllers\UnidadMedidaController;
 use App\Http\Controllers\SolicitanteController;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
-
 
 Route::get('/', function () {
     return Inertia::render('Welcome', [
@@ -31,91 +35,178 @@ Route::get('/dashboard', function () {
     return Inertia::render('Dashboard');
 })->middleware(['auth', 'verified'])->name('dashboard');
 
-
+// Rutas protegidas (web + sesión)
 Route::middleware('auth')->group(function () {
+
+    Route::prefix('proyectos/{proyecto}')->name('proyectos.')->controller(SalidaController::class)->group(function () {
+        // Listado (index)
+        Route::get('/salidas', 'index')->name('salidas');
+        // dentro del mismo grupo
+        Route::get('productos', [SalidaController::class, 'productosProyecto'])->name('productos');
+
+        // Crear formulario
+        Route::get('/salidas/create', 'create')->name('salidas.create');
+
+        // Guardar (soporta single item o { items: [...] } para bulk)
+        Route::post('/salidas', 'store')->name('salidas.store');
+
+        // Editar / actualizar
+        Route::get('/salidas/{id}/edit', 'edit')->name('salidas.edit');
+        Route::put('/salidas/{id}', 'update')->name('salidas.update');
+        Route::patch('/salidas/{id}', 'update'); // opcional, si usas patch
+
+        // Eliminar
+        Route::delete('/salidas/{id}', 'destroy')->name('salidas.destroy');
+
+        // Buscar producto (usado en frontend: /buscar-producto/{codigo})
+        Route::get('/salidas/buscar-producto/{codigo}', 'buscarProducto')->name('salidas.buscarProducto');
+
+        // Buscar / filtrar salidas por producto
+        Route::get('/salidas/por-producto/{codigo}', 'porProducto')->name('salidas.porProducto');
+
+        // Importar / Exportar
+        Route::post('/salidas/importar', 'importarSalidas')->name('salidas.importar');
+        Route::get('/salidas/exportar', 'exportarProyecto')->name('salidas.exportar');
+    });
+
+
+    Route::get('/proyectos/{proyecto}/salidas/producto/{codigo}/pdf', [SalidaPdfController::class, 'exportPdf'])
+        ->name('salidas.producto.pdf');
+
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
+    // routes/api.php o web.php (según tu estructura)
+    Route::patch('/proyectos/{proyectoId}/salidas/aceptar-multiple', [SalidaController::class, 'aceptarMultiple']);
+
+    // Proyectos (lista y crear)
+    Route::get('/proyectos', [ProyectoController::class, 'index'])->name('proyectos.index');
+    Route::get('/CrearProyecto', [CrearController::class, 'index'])->name('page.one');
+    Route::post('/crear', [ProyectoController::class, 'store'])->name('proyectos.store');
+
+    // Export global de proyecto
+    Route::get('/proyecto/{proyecto}/exportar', [ProyectoExportController::class, 'exportarProyecto'])
+        ->name('proyecto.exportar');
+    Route::get('/proyectos/{proyecto}/salidas/producto/{codigo}/debug', [SalidaDebugController::class, 'porProductoDebug']);
+
+    // Grupo de rutas que pertenecen a un proyecto específico
+    Route::prefix('proyectos/{proyecto}')->name('proyectos.')->group(function () {
+
+        // Inventario-salidas view
+        Route::get('inventario-salidas', [InventarioSalidaController::class, 'show'])->name('inventario_salidas');
+
+        // Inventarios
+        Route::get('inventarios', [InventarioController::class, 'index'])->name('inventarios.index');
+        Route::get('inventarios/create', [InventarioController::class, 'create'])->name('inventarios.create');
+        Route::post('inventarios', [InventarioController::class, 'store'])->name('inventarios.store');
+        Route::get('inventarios/verificar-codigo/{codigo}', [InventarioController::class, 'verificarCodigo'])
+            ->where('codigo', '.*')->name('inventarios.verificar_codigo');
+        Route::get('inventarios/{id}/edit', [InventarioController::class, 'edit'])->name('inventarios.edit');
+        Route::put('inventarios/{id}', [InventarioController::class, 'update'])->name('inventarios.update');
+        Route::delete('inventarios/{id}', [InventarioController::class, 'destroy'])->name('inventarios.destroy');
+
+
+        // Salidas
+        Route::get('salidas', [SalidaController::class, 'index'])->name('salidas.index');
+        Route::get('salidas/create', [SalidaController::class, 'create'])->name('salidas.create');
+        Route::post('salidas', [SalidaController::class, 'store'])->name('salidas.store');
+        Route::get('salidas/{id}/edit', [SalidaController::class, 'edit'])->name('salidas.edit');
+        Route::put('salidas/{id}', [SalidaController::class, 'update'])->name('salidas.update');
+        Route::delete('salidas/{id}', [SalidaController::class, 'destroy'])->name('salidas.destroy');
+
+
+
+        Route::get('am/create', [AmMovimientoController::class, 'create'])
+            ->name('proyectos.am.create');
+
+        Route::post('/am', [AmMovimientoController::class, 'store'])
+            ->name('proyectos.am.store');
+
+
+        // EASY (mostrar form + guardar)
+        Route::get('/easy/create', [ProyectoEasyController::class, 'create'])
+            ->name('proyectos.easy.create');
+
+
+        Route::get('salidas/producto/{codigo}', [SalidaController::class, 'porProducto'])
+            ->where('codigo', '.*')->name('salidas.por_producto');
+
+        Route::get('buscar-producto/{codigo}', [SalidaController::class, 'buscarProducto'])
+            ->where('codigo', '.*')->name('salidas.buscar_producto');
+
+        // Import / Export del proyecto
+
+        Route::get('exportar', [ProyectoExportController::class, 'exportarProyecto'])->name('exportar');
+        Route::get('exportar-opcional', [ProyectoExportController::class, 'exportarProyectoOpcional'])->name('exportar.opcional');
+
+        Route::get('inventarios/exportar', [InventarioController::class, 'exportarInventario'])->name('inventarios.exportar');
+        Route::post('inventarios/importar', [InventarioController::class, 'importarInventario'])->name('inventarios.importar');
+
+        Route::post('salidas/importar', [SalidaController::class, 'importarSalidas'])->name('salidas.importar');
+    });
+
+    Route::middleware(['auth'])->group(function () {
+        Route::match(['get', 'post'], '/proyectos/{proyecto}/easy/preferences', [ProyectoEasyController::class, 'preferences']);
+    });
+
+    Route::middleware(['auth'])->group(function () {
+        Route::get('/proyectos/{proyecto}/easy/last-prefill', [ProyectoEasyController::class, 'lastPrefill'])
+            ->name('proyectos.easy.last_prefill');
+    });
+
+
+    Route::middleware(['auth'])->group(function () {
+        // Caja
+        Route::get('proyectos/{proyecto}/amcaja/{id}/edit', [AmMovimientoController::class, 'editCaja'])
+            ->name('proyectos.amcaja.edit');
+        Route::put('proyectos/{proyecto}/amcaja/{id}', [AmMovimientoController::class, 'updateCaja'])
+            ->name('proyectos.amcaja.update');
+        Route::delete('proyectos/{proyecto}/amcaja/{id}', [AmMovimientoController::class, 'destroyCaja'])
+            ->name('proyectos.amcaja.destroy');
+
+        // Banco
+        Route::get('proyectos/{proyecto}/ambanco/{id}/edit', [AmMovimientoController::class, 'editBanco'])
+            ->name('proyectos.ambanco.edit');
+        Route::put('proyectos/{proyecto}/ambanco/{id}', [AmMovimientoController::class, 'updateBanco'])
+            ->name('proyectos.ambanco.update');
+        Route::delete('proyectos/{proyecto}/ambanco/{id}', [AmMovimientoController::class, 'destroyBanco'])
+            ->name('proyectos.ambanco.destroy');
+    });
+
+    Route::get('proyectos/{proyecto}/easy/{id}/edit', [ProyectoEasyController::class, 'editEasy'])
+        ->name('proyectos.easy.edit');
+
+    Route::put('proyectos/{proyecto}/easy/{id}', [ProyectoEasyController::class, 'updateEasy'])
+        ->name('proyectos.easy.update');
+
+    Route::delete('proyectos/{proyecto}/easy/{id}', [ProyectoEasyController::class, 'destroyEasy'])
+        ->name('proyectos.easy.destroy');
+
+    Route::get('/proyectos/{proyecto}/exchange-rate', [ExchangeRateController::class, 'getForMonth']);
+    Route::post('/proyectos/{proyecto}/exchange-rate', [ExchangeRateController::class, 'upsert']);
+
+    // Si quieres endpoint global (sin proyecto) para crear global:
+    Route::post('/exchange-rate', [ExchangeRateController::class, 'upsert']);
+
+    // POST para guardar (ruta canonical)
+    Route::post('/proyectos/{proyecto}/am', [AmMovimientoController::class, 'store'])
+        ->name('proyectos.am.store');
+
+    Route::get('proyectos/{proyecto}/am/{id}/edit', [AmMovimientoController::class, 'edit'])
+        ->name('proyectos.am.edit');
+
+    Route::put('proyectos/{proyecto}/am/{id}', [AmMovimientoController::class, 'update'])
+        ->name('proyectos.am.update');
+
+    // opcional: alias si el frontend ya usa "/guardar"
+    Route::post('/proyectos/{proyecto}/am/guardar', [AmMovimientoController::class, 'store']);
+    // Rutas globales
+    Route::get('inventarios/pdf', [InventarioController::class, 'generarPDF'])->name('inventarios.pdf');
+    Route::get('/reportes', [ActivityLogController::class, 'index'])->name('reportes.index');
+    Route::get('/personas', [PersonaController::class, 'index'])->name('personas.index');
+    Route::get('/categorias', [CategoriaController::class, 'index'])->name('categorias.index');
+    Route::get('/unidades-medida', [UnidadMedidaController::class, 'index'])->name('unidades_medida.index');
+    Route::get('/solicitantes', [SolicitanteController::class, 'index'])->name('solicitantes.index');
 });
 
-//boton ruta de crear Proyecto
-Route::get('/CrearProyecto', [CrearController::class, 'index'])->name('page.one');
-//ruta que crea el proyecto
-Route::post('/crear',[ProyectoController::class, 'store'])->name('proyectos.store');
-
-
-//boton ruta ver los proyecto
-Route::get('/proyectos', [ProyectoController::class, 'index'])->name('proyectos.index');
-//ruta para ver los datos del proyecto escogido 
-Route::get('/proyectos/{proyecto}/inventario-salidas', [InventarioSalidaController::class, 'show'])
-    ->name('proyectos.inventario_salidas');
-
-
-//boton ruta para ver los reportes
-Route::get('/reportes', [ReporteController::class, 'index'])->name('page.three');
-
-
-// Inventarios
-Route::get('/proyectos/{proyecto}/inventarios', [InventarioController::class, 'index'])->name('proyectos.inventarios');
-Route::get('/proyectos/{proyecto}/inventarios/create', [InventarioController::class, 'create'])->name('proyectos.inventarios.create');
-Route::post('/proyectos/{proyecto}/inventarios', [InventarioController::class, 'store'])->name('proyectos.inventarios.store');
-Route::get('/proyectos/{proyecto}/inventarios/verificar-codigo/{codigo}', [InventarioController::class, 'verificarCodigo']);
-
-// Nuevas rutas para editar y eliminar
-Route::get('/proyectos/{proyecto}/inventarios/{id}/edit', [InventarioController::class, 'edit'])->name('proyectos.inventarios.edit');
-Route::put('/proyectos/{proyecto}/inventarios/{id}', [InventarioController::class, 'update'])->name('proyectos.inventarios.update');
-Route::delete('/proyectos/{proyecto}/inventarios/{id}', [InventarioController::class, 'destroy'])->name('proyectos.inventarios.destroy');
-
-//consultas:
-Route::get('/proyectos/{proyecto}/salidas/producto/{codigo}', 
-    [SalidaController::class, 'porProducto']
-)->where('codigo', '.*');
-
-
-//salidas
-Route::get('/proyectos/{proyecto}/salidas', [SalidaController::class, 'index'])->name('proyectos.salidas');
-Route::get('/proyectos/{proyecto}/salidas/create', [SalidaController::class, 'create'])->name('proyectos.salidas.create');
-Route::post('/proyectos/{proyecto}/salidas', [SalidaController::class, 'store'])->name('proyectos.salidas.store');
-
-Route::get('/proyectos/{proyecto}/salidas/{id}/edit', [SalidaController::class, 'edit'])->name('proyectos.salidas.edit');
-Route::put('/proyectos/{proyecto}/salidas/{id}', [SalidaController::class, 'update'])->name('proyectos.salidas.update');
-Route::delete('/proyectos/{proyecto}/salidas/{id}', [SalidaController::class, 'destroy'])->name('proyectos.salidas.destroy');
-
-
-//ruta para el exel
-Route::get('inventario/{proyecto}/exportar', [InventarioController::class, 'exportarInventario']);
-Route::post('inventario/{proyecto}/importar', [InventarioController::class, 'importarInventario']);
-
-//otra ruta mas exel profecional:
-Route::get('/proyecto/{proyecto}/exportar', [ProyectoExportController::class, 'exportarProyecto'])
-     ->name('proyecto.exportar');
-
-//otra ruta mas exel usuariosw:
-Route::get('/proyecto/{proyecto}/egpi0013', [ProyectoExportController::class, 'exportarProyectoOpcional'])
-     ->name('proyecto.exportar');
-
-//buscar producto para las salidas:
-Route::get('/proyectos/{proyecto}/buscar-producto/{codigo}', [SalidaController::class, 'buscarProducto'])
-    ->where('codigo', '.*');
-
-//ruta para el exel
-Route::post('salidas/{proyecto}/importar', [SalidaController::class, 'importarSalidas']);
-
-//ruta para exportar el pdf
-Route::get('/inventarios/pdf', [InventarioController::class, 'generarPDF'])->name('inventarios.pdf');
-Route::get('/reportes', function () {
-    return Inertia::render('Logs/Index');
-})->name('reportes.index');
-
-Route::get('/reportes', [ActivityLogController::class, 'index'])
-    ->name('reportes.index');
-
-Route::get('/personas', [PersonaController::class, 'index']);
-
-Route::get('/categorias', [CategoriaController::class, 'index']);
-
-Route::get('/unidades-medida', [UnidadMedidaController::class, 'index']);
-
-Route::get('/solicitantes', [SolicitanteController::class, 'index']);
-
-require __DIR__.'/auth.php';
+require __DIR__ . '/auth.php';

@@ -21,6 +21,9 @@
         "vue": "^3.4.0"
     },
     "dependencies": {
+        "autotable": "^1.0.0",
+        "jspdf": "^3.0.2",
+        "mustache": "^4.2.0",
         "sweetalert2": "^11.22.5"
     }
 }

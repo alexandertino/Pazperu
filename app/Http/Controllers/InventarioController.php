@@ -12,6 +12,7 @@ use Inertia\Inertia;
 use Rap2hpoutre\FastExcel\FastExcel;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Log;
 
 class InventarioController extends Controller
 {
@@ -37,7 +38,7 @@ class InventarioController extends Controller
             'proyecto' => $proyecto
         ]);
     }
-
+    
     public function store(Request $request, $proyectoId){
         $request->validate([
             'codigo' => 'required|string|max:255',
@@ -54,35 +55,6 @@ class InventarioController extends Controller
         $proyecto = Proyecto::findOrFail($proyectoId);
         $tablaInventario = 'inventario_proyecto_' . Str::of($proyecto->nombre)->lower()->replace(' ', '_');
 
-        // 🔹 Registrar o actualizar en tabla global de categorías
-        if (!DB::table('categorias')->where('nombre', $request->categoria)->exists()) {
-            DB::table('categorias')->insert([
-                'nombre'     => $request->categoria,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
-        }
-
-        // 🔹 Registrar o actualizar en tabla global de unidades de medida
-        if (!DB::table('unidades_medida')->where('nombre', $request->unidad_medida)->exists()) {
-            DB::table('unidades_medida')->insert([
-                'nombre'     => $request->unidad_medida,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
-        }
-
-        // 🔹 Registrar o actualizar en tabla global de solicitantes (si existe valor)
-        if (!empty($request->solicitado_por) &&
-            !DB::table('solicitantes')->where('nombre', $request->solicitado_por)->exists()) {
-            DB::table('solicitantes')->insert([
-                'nombre'     => $request->solicitado_por,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
-        }
-
-        // 🔹 Guardar inventario (manteniendo los valores de texto)
         $id = DB::table($tablaInventario)->insertGetId([
             'codigo' => $request->codigo,
             'fecha' => $request->fecha,
@@ -161,7 +133,7 @@ class InventarioController extends Controller
             'precio' => 'required|numeric|min:0',
             'solicitado_por' => 'nullable|string|max:255',
             'proyecto_lg' => 'nullable|string|max:255',
-            'comentario' => 'nullable|string', // 👈 validación
+            'comentario' => 'nullable|string', 
         ]);
 
         $proyecto = Proyecto::findOrFail($proyectoId);
@@ -182,7 +154,7 @@ class InventarioController extends Controller
                 'stock' => $request->stock,
                 'precio' => $request->precio,
                 'solicitado_por' => $request->solicitado_por,
-                'comentario' => $request->comentario, // 👈 se actualiza el comentario
+                'comentario' => $request->comentario,
                 'updated_at' => now(),
             ]);
 
@@ -200,33 +172,47 @@ class InventarioController extends Controller
             ],
         ]);
 
-        return redirect()->route('proyectos.inventarios', $proyectoId)
-            ->with('success', 'Inventario actualizado correctamente.');
     }
 
 
     public function destroy($proyectoId, $id)
     {
-        $proyecto = Proyecto::findOrFail($proyectoId);
-        $tablaInventario = 'inventario_proyecto_' . Str::of($proyecto->nombre)->lower()->replace(' ', '_');
+        DB::beginTransaction();
 
-        $inventario = DB::table($tablaInventario)->where('id', $id)->first();
+        try {
+            $proyecto = Proyecto::findOrFail($proyectoId);
+            $tablaInventario = 'inventario_proyecto_' . Str::of($proyecto->nombre)->lower()->replace(' ', '_');
 
-        DB::table($tablaInventario)->where('id', $id)->delete();
+            $inventario = DB::table($tablaInventario)->where('id', $id)->first();
 
-        // Log de eliminación
-        ActivityLog::create([
-            'user_id' => Auth::id(),
-            'action' => 'delete',
-            'model' => $tablaInventario,
-            'model_id' => $id,
-            'changes' => ['deleted' => $inventario],
-        ]);
+            if (!$inventario) {
+                DB::rollBack();
+                return response()->json(['message' => 'Inventario no encontrado'], 404);
+            }
 
-        return redirect()->route('proyectos.inventarios', $proyectoId)
-            ->with('success', 'Inventario eliminado correctamente.');
+            DB::table($tablaInventario)->where('id', $id)->delete();
+
+            $inventarioArray = (array) $inventario;
+
+            ActivityLog::create([
+                'user_id'  => Auth::id(),
+                'action'   => 'delete',
+                'model'    => $tablaInventario,
+                'model_id' => $id,
+                'changes'  => ['deleted' => $inventarioArray],
+            ]);
+
+            DB::commit();
+
+            return response()->json(['message' => 'Inventario eliminado correctamente.'], 200);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error("Error eliminando inventario (proyecto: $proyectoId, id: $id): " . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
+            ]);
+            return response()->json(['message' => 'Error al eliminar inventario', 'error' => $e->getMessage()], 500);
+        }
     }
-
     // Exportar inventario a Excel
     public function exportarInventario($proyecto)
     {

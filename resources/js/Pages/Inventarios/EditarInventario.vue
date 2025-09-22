@@ -19,11 +19,9 @@ const form = useForm({
     stock: props.inventario.stock,
     precio: props.inventario.precio,
     solicitado_por: props.inventario.solicitado_por,
-    comentario: props.inventario.comentario ?? "" // si está null → lo deja vacío
+    comentario: props.inventario.comentario ?? "" 
 });
 
-// 🔄 Si quieres que siempre aparezca el comentario, ponlo en true.
-// Si prefieres mostrar solo cuando haya algo, hazlo dinámico.
 const mostrarComentario = true;
 
 const actualizar = () => {

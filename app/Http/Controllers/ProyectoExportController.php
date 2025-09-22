@@ -37,7 +37,7 @@ class ProyectoExportController extends Controller
 
         // 🔹 Salidas (forzamos 0 en cantidad)
         $salidas = DB::table($tablaSalidas)
-            ->select('n_acta', 'nombre', 'lugar', 'distrito', 'fecha', 'producto', 'cantidad')
+            ->select('n_acta', 'nombre', 'lugar', 'distrito', 'fecha', 'producto_code', 'producto_label', 'um', 'cantidad')
             ->get()
             ->map(function ($item) {
                 $arr = (array) $item;
@@ -72,7 +72,7 @@ class ProyectoExportController extends Controller
 
         // ================== 5. Títulos principales ==================
         // 🔹 Fila 1 (Título del proyecto)
-        $sheet->mergeCells('A1:O1');
+        $sheet->mergeCells('A1:Q1');
         $sheet->setCellValue('A1', strtoupper("Proyecto: $proyecto"));
         $sheet->getStyle('A1')->getFont()->setSize(16)->setBold(true);
         $sheet->getStyle('A1')->getAlignment()
@@ -110,7 +110,7 @@ class ProyectoExportController extends Controller
         $sheet->getStyle("A3:H{$ultimaFilaInv}")->applyFromArray($outerBorders);
 
         // -------- Salidas --------
-        $sheet->mergeCells('I2:O2');
+        $sheet->mergeCells('I2:Q2');
         $sheet->setCellValue('I2', 'SALIDAS');
         $sheet->getStyle('I2')->getFont()->setBold(true)->setSize(14);
         $sheet->getStyle('I2:O2')->getAlignment()
@@ -120,14 +120,29 @@ class ProyectoExportController extends Controller
             ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
             ->getStartColor()->setRGB('C6E0B4');
 
-        $headersSalidas = ['N° ACTA', 'NOMBRE', 'LUGAR', 'DISTRITO', 'FECHA', 'CÓDIGO PRODUCTO', 'CANTIDAD'];
-        $sheet->fromArray($headersSalidas, null, 'I3');
-        $sheet->getStyle('I3:O3')->getFont()->setBold(true);
-        $sheet->getStyle('I3:O3')->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
-        $sheet->getStyle('I3:O3')->getFill()->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)->getStartColor()->setRGB('E2EFDA');
+        $headersSalidas = [
+            'N° ACTA',
+            'NOMBRE',
+            'LUGAR',
+            'DISTRITO',
+            'FECHA',
+            'CÓDIGO PRODUCTO',
+            'PRODUCTO',
+            'U.M.',
+            'CANTIDAD'
+        ];
 
-        $sheet->getStyle("I3:O{$ultimaFilaSal}")->applyFromArray($innerBorders);
-        $sheet->getStyle("I3:O{$ultimaFilaSal}")->applyFromArray($outerBorders);
+        $sheet->fromArray($headersSalidas, null, 'I3');
+        $sheet->getStyle('I3:Q3')->getFont()->setBold(true);
+        $sheet->getStyle('I3:Q3')->getAlignment()
+            ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
+        $sheet->getStyle('I3:Q3')->getFill()
+            ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
+            ->getStartColor()->setRGB('E2EFDA');
+
+        $sheet->getStyle("I3:Q{$ultimaFilaSal}")->applyFromArray($innerBorders);
+        $sheet->getStyle("I3:Q{$ultimaFilaSal}")->applyFromArray($outerBorders);
+
 
         // ================== 7. Inserción de datos ==================
         // Inventario
