@@ -111,7 +111,6 @@ class ProyectoController extends Controller
         if (!Schema::hasTable($tableEasy)) {
             Schema::create($tableEasy, function (Blueprint $table) {
                 $table->id();
-                $table->string('n_acta')->nullable()->index();
                 $table->string('Cuenta_general')->nullable();
                 $table->decimal('gasto_moneda_local', 15, 2)->default(0);
                 $table->decimal('ingreso_moneda_local', 15, 2)->default(0);

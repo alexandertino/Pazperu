@@ -4,9 +4,10 @@
 ========================== */
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import { Head, router, usePage } from '@inertiajs/vue3';
-import { ref, computed, reactive } from 'vue';
+import { ref, computed, reactive, onMounted, watch } from 'vue';
 import axios from 'axios';
 import Swal from "sweetalert2";
+
 
 const user = usePage().props.auth.user;
 
@@ -56,9 +57,52 @@ const tablaVisibleLabel = computed(() => {
     if (tablaVisible.value === 'easy') return 'Easy'
     return ''
 })
-const hoy = new Date();
-const mesActivo = ref(hoy.getMonth() + 1); // 1..12
-const anioActivo = ref(hoy.getFullYear());
+
+// Helpers (robustos para formatos:
+// "YYYY-MM-DD", "YYYY-MM-DD HH:MM:SS", "YYYY-MM-DDTHH:MM:SSZ", etc.)
+function getDateParts(fecha) {
+    if (!fecha) return { mes: null, anio: null };
+    const s = String(fecha).slice(0, 10);        // toma "YYYY-MM-DD"
+    const parts = s.split('-');
+    const anio = parseInt(parts[0], 10) || null;
+    const mes = parseInt(parts[1], 10) || null; // 1..12
+    return { mes, anio };
+}
+
+// Filtros (reemplaza/añade donde tengas tus computed)
+const actasCajaFiltradas = computed(() =>
+    (props.caja || []).filter(item => {
+        const { mes, anio } = getDateParts(item.fecha);
+        return mes === mesActivo.value && anio === anioActivo.value;
+    })
+);
+
+const actasBancoFiltradas = computed(() =>
+    (props.banco || []).filter(item => {
+        const { mes, anio } = getDateParts(item.fecha);
+        return mes === mesActivo.value && anio === anioActivo.value;
+    })
+);
+
+const itemsEasyFiltrados = computed(() =>
+    (props.easy || []).filter(item => {
+        // si el campo easy usa created_at o fecha, ajusta aquí: item.fecha o item.created_at
+        const { mes, anio } = getDateParts(item.fecha);
+        return mes === mesActivo.value && anio === anioActivo.value;
+    })
+);
+
+const hoy = new Date()
+const mesActivo = ref(hoy.getMonth() + 1)
+const anioActivo = ref(hoy.getFullYear())
+
+// ✅ Función para sacar mes/año de un string YYYY-MM-DD
+function getMes(fecha) {
+    return parseInt(fecha.substring(5, 7))
+}
+function getAnio(fecha) {
+    return parseInt(fecha.substring(0, 4))
+}
 
 function prevMonth() {
     if (mesActivo.value === 1) { mesActivo.value = 12; anioActivo.value--; }
@@ -701,20 +745,6 @@ const ultimoSaldoDelMes = (items = [], fechaCampo = 'fecha') => {
 ========================== */
 
 /* Filtrados actuales por mesActivo/anioActivo */
-const actasCajaFiltradas = computed(() =>
-    (actasCaja?.value || []).filter(a => esDelMes(a.fecha))
-);
-
-const actasBancoFiltradas = computed(() =>
-    (actasBanco?.value || []).filter(a => esDelMes(a.fecha))
-);
-
-const itemsEasyFiltrados = computed(() =>
-    (itemsEasy?.value || []).filter(i => {
-        const fecha = i.created_at ?? i.fecha ?? i.fecha_movimiento ?? null;
-        return esDelMes(fecha);
-    })
-);
 
 /* Totales del mes (ingresos / egresos / movimientos) - CAJA */
 const ingresosCajaTotal = computed(() =>
@@ -819,23 +849,45 @@ const form = reactive({
     bailleur_fondos: '',
 });
 
-
 function abrirCrearEasyConActa(acta = {}) {
+    const sanitizeTextKeepAccents = (s, maxLen = 200) => {
+        if (s == null) return '';
+        let t = String(s).normalize('NFKC');
+        t = t.replace(/[\r\n]+/g, ' ');
+        t = t.replace(/\s+/g, ' ').trim();
+        if (t.length > maxLen) t = t.slice(0, maxLen);
+        return t;
+    };
+
+    const descripcionLimpia = sanitizeTextKeepAccents(acta.descripcion ?? '');
+
+    const payload = {
+        Cuenta_general: acta.cuenta_general ?? '',
+        gasto_moneda_local: acta.egresos ?? 0,
+        ingreso_moneda_local: acta.ingresos ?? 0,
+        descripcion: descripcionLimpia,
+        codigo_presupuestario: acta.presupuestario ?? '',
+        actividad: acta.actividad ?? '',
+        n_acta: acta.n_acta ?? ''
+    };
+
     router.visit(`/proyectos/${props.proyecto.id}/easy/create`, {
         method: 'get',
-        data: {
-            Cuenta_general: acta.cuenta_general ?? '',
-            gasto_moneda_local: acta.egresos ?? 0,
-            ingreso_moneda_local: acta.ingresos ?? 0,
-            descripcion: acta.descripcion ?? '',
-            numero_descripcion_pieza: acta.numero_descripcion_pieza ?? null,
-            codigo_presupuestario: acta.presupuestario ?? '',
-            actividad: acta.actividad ?? '',
-            n_acta: acta.n_acta ?? ''
-        }
+        data: payload
     });
 }
 
+
+
+// =======================
+// hohla
+// =======================
+
+
+
+// =======================
+// hohla
+// =======================
 function eliminarCaja(id) {
     if (confirm('¿Seguro que quieres eliminar este registro de caja?')) {
         router.delete(route('proyectos.amcaja.destroy', { proyecto: props.proyecto.id, id }))
@@ -849,11 +901,157 @@ function eliminarBanco(id) {
 }
 
 function eliminarActa(id) {
-  if (!confirm('¿Seguro que quieres eliminar este registro?')) return;
+    if (!confirm('¿Seguro que quieres eliminar este registro?')) return;
 
-  // ajusta el nombre de la ruta si es distinto
-  router.delete(route('proyectos.easy.destroy', { proyecto: props.proyecto.id, id }));
+    // ajusta el nombre de la ruta si es distinto
+    router.delete(route('proyectos.easy.destroy', { proyecto: props.proyecto.id, id }));
 }
+
+
+// -----------------------------
+// Vinculaciones (batch + helpers)
+// -----------------------------
+
+// Estado visible en template
+const modalVinculacionVisible = ref(false)
+const currentActa = ref(null)
+const vinculacionesActuales = ref([])
+
+// Mapa local: key = am_row_id (string) => array de vinculaciones
+const vinculacionMap = ref(new Map())
+
+// Construir nombre de am_table igual que en backend
+const buildAmTable = (tipo = 'caja') => {
+    const base = String(props.proyecto?.nombre ?? '')
+        .toLowerCase()
+        .replace(/\s+/g, '_')
+        .replace(/[^a-z0-9_]/g, '')
+    return tipo === 'caja' ? `am_caja_proyecto_${base}` : `am_banco_proyecto_${base}`
+}
+
+// Retorna true si existe al menos 1 vinculación para la acta
+const isVinculado = (acta, tipo = 'caja') => {
+    if (!acta) return false
+    const id = String(acta.id ?? acta.am_row_id ?? '')
+    if (!id) return false
+
+    // Si mantienes un solo map:
+    const arr = vinculacionMap.value.get(id)
+    return Array.isArray(arr) && arr.length > 0
+
+    // Si tienes mapas separados (recomendado), usa:
+    // const arr = (tipo === 'banco' ? vinculacionMapBanco.value : vinculacionMapCaja.value).get(id)
+}
+
+// Batch load: carga vinculaciones para todas las actas visibles
+const loadVinculacionesBatch = async (tipo = 'caja') => {
+    try {
+        const actas = (tipo === 'caja') ? actasCajaFiltradas.value : actasBancoFiltradas.value
+        const ids = (actas || []).map(a => a.id ?? a.am_row_id).filter(Boolean).map(String)
+        if (!ids.length) {
+            vinculacionMap.value = new Map()
+            return
+        }
+        const amTable = buildAmTable(tipo)
+        const url = `/proyectos/${props.proyecto.id}/vinculaciones/batch`
+        const res = await axios.get(url, { params: { am_table: amTable, rows: ids }, headers: { Accept: 'application/json' } })
+        const payload = res.data.vinculaciones ?? {}
+        const map = new Map()
+        for (const id of ids) map.set(String(id), payload[String(id)] ?? [])
+        for (const k of Object.keys(payload)) map.set(String(k), payload[k] ?? [])
+        vinculacionMap.value = map
+    } catch (err) {
+        console.error('Error loadVinculacionesBatch:', err)
+        vinculacionMap.value = new Map()
+    }
+}
+
+// Mostrar modal con vinculaciones (usa mapa si ya cargado)
+const verVinculacion = async (acta, tipo = 'caja') => {
+    if (!acta) return
+    currentActa.value = acta
+    const id = String(acta.id ?? acta.am_row_id ?? '')
+    if (!id) { alert('No se identificó la acta'); return }
+
+    // Si estás usando un único vinculacionMap, simplemente comprueba:
+    if (vinculacionMap.value.has(id)) {
+        vinculacionesActuales.value = vinculacionMap.value.get(id) ?? []
+        modalVinculacionVisible.value = true
+        return
+    }
+
+    // Si quieres evitar conflictos entre caja/banco, puedes mantener mapas separados.
+    // Ejemplo para mapas separados (descomenta si los usas):
+    // const mapRef = tipo === 'banco' ? vinculacionMapBanco.value : vinculacionMapCaja.value
+    // if (mapRef.has(id)) { vinculacionesActuales.value = mapRef.get(id) ?? []; modalVinculacionVisible.value = true; return }
+
+    try {
+        const amTable = buildAmTable(tipo === 'banco' ? 'banco' : 'caja')
+        const url = `/proyectos/${props.proyecto.id}/vinculaciones/one`
+        const res = await axios.get(url, { params: { am_table: amTable, am_row_id: id }, headers: { Accept: 'application/json' } })
+        const data = res.data.vinculaciones ?? []
+
+        // Guardar en el map (si es único):
+        vinculacionMap.value.set(id, data)
+
+        // Si usas mapas separados:
+        // if (tipo === 'banco') vinculacionMapBanco.value.set(id, data)
+        // else vinculacionMapCaja.value.set(id, data)
+
+        vinculacionesActuales.value = data
+        modalVinculacionVisible.value = true
+    } catch (err) {
+        console.error('verVinculacion error:', err)
+        vinculacionesActuales.value = []
+        modalVinculacionVisible.value = true
+        alert('Error al obtener datos de vinculación.')
+    }
+}
+
+// montar y watchers
+onMounted(() => loadVinculacionesBatch(tablaVisible.value === 'caja' ? 'caja' : 'banco'))
+
+watch(tablaVisible, (nv) => {
+    const tipo = nv === 'caja' ? 'caja' : 'banco'
+    loadVinculacionesBatch(tipo)
+})
+
+watch(() => actasCajaFiltradas.value, () => {
+    if (tablaVisible.value === 'caja') loadVinculacionesBatch('caja')
+}, { deep: true })
+
+watch(() => actasBancoFiltradas.value, () => {
+    if (tablaVisible.value === 'banco') loadVinculacionesBatch('banco')
+}, { deep: true })
+
+
+const enviarActaAEasy = (acta, origen = 'banco') => {
+    const sanitizeTextKeepAccents = (s, maxLen = 200) => {
+        if (s == null) return '';
+        let t = String(s).normalize('NFKC');
+        t = t.replace(/[\r\n]+/g, ' ');
+        t = t.replace(/\s+/g, ' ').trim();
+        if (t.length > maxLen) t = t.slice(0, maxLen);
+        return t;
+    };
+
+    const payload = {
+        Cuenta_general: acta.cuenta_general ?? '',
+        gasto_moneda_local: acta.egresos ?? 0,
+        ingreso_moneda_local: acta.ingresos ?? 0,
+        descripcion: sanitizeTextKeepAccents(acta.descripcion ?? ''), // 🚀 mandamos tal cual
+        codigo_presupuestario: acta.presupuestario ?? '',
+        actividad: acta.actividad ?? '',
+        n_acta: acta.n_acta ?? '',
+        origen: origen
+    };
+
+    router.visit(`/proyectos/${props.proyecto.id}/easy/create`, {
+        method: 'get',
+        data: payload
+    });
+};
+
 
 </script>
 
@@ -880,7 +1078,7 @@ function eliminarActa(id) {
                     ]">
                         Precios
                     </button>
-                    <button @click="cambiarPestana('Contabilidad')" :class="[
+                    <button v-if="user.role === 'admin'" @click="cambiarPestana('Contabilidad')" :class="[
                         'px-4 py-2 rounded transition font-medium',
                         pestañaActiva === 'Contabilidad'
                             ? 'bg-blue-600 text-white'
@@ -907,668 +1105,15 @@ function eliminarActa(id) {
                 </div>
             </div>
             <p class="text-sm text-gray-500 dark:text-gray-400">
-                Estado: {{ proyecto.estado }} — Inicio: {{ proyecto.fecha_inicio }} — Fin: {{ proyecto.fecha_fin ??
-                    'Pendiente' }}
+                Estado: {{ proyecto.estado }} — Inicio: {{ proyecto.fecha_inicio }} — Fin: {{ proyecto.fecha_fin ?? 'Pendiente' }}
             </p>
         </template>
 
-        <!-- Resumen de Inventario — Precios (mejorado) -->
-        <section v-if="pestañaActiva === 'Precios'"
-            class="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-lg mt-6 border border-gray-200 dark:border-gray-700 transition">
-            <header class="flex items-start justify-between gap-4 mb-6">
-                <div class="flex items-center gap-3">
-                    <!-- Icono SVG profesional -->
-                    <svg class="w-8 h-8 text-indigo-500 dark:text-indigo-300" viewBox="0 0 24 24" fill="none"
-                        aria-hidden>
-                        <path d="M3 13h4v8H3zM10 8h4v13h-4zM17 3h4v18h-4z" fill="currentColor" opacity="0.9" />
-                    </svg>
-                    <div>
-                        <h2 class="text-2xl font-extrabold text-gray-900 dark:text-gray-100">Resumen de Inventario —
-                            Precios
-                        </h2>
-                        <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Filtros rápidos, estadísticas y lista
-                            de
-                            productos por valor.</p>
-                    </div>
-                </div>
 
-                <div class="flex items-center gap-2">
-                    <button @click="refrescarInventario"
-                        class="inline-flex items-center gap-2 px-3 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-300">
-                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none">
-                            <path d="M21 12a9 9 0 1 0-1.46 4.9" stroke="currentColor" stroke-width="1.5"
-                                stroke-linecap="round" stroke-linejoin="round" />
-                        </svg>
-                        Refrescar
-                    </button>
-                </div>
-            </header>
-
-            <!-- filtros -->
-            <form @submit.prevent class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end mb-6">
-                <div>
-                    <label for="buscar" class="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Buscar
-                        (código /
-                        producto)</label>
-                    <input id="buscar" v-model="filtroPrecioBuscar" type="search" placeholder="Buscar..."
-                        class="w-full p-2 border rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-indigo-200 dark:focus:ring-indigo-700" />
-                </div>
-
-                <div class="flex gap-2 items-end">
-                    <div>
-                        <label for="precio-min"
-                            class="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Precio
-                            min</label>
-                        <input id="precio-min" v-model.number="filtroPrecioMin" type="number" min="0" step="0.01"
-                            class="p-2 border rounded-lg w-36 dark:bg-gray-700 dark:text-white" />
-                    </div>
-                    <div>
-                        <label for="precio-max"
-                            class="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Precio
-                            max</label>
-                        <input id="precio-max" v-model.number="filtroPrecioMax" type="number" min="0" step="0.01"
-                            class="p-2 border rounded-lg w-36 dark:bg-gray-700 dark:text-white" />
-                    </div>
-                </div>
-
-                <div class="flex justify-end md:justify-start">
-                    <button @click="limpiarFiltrosPrecio"
-                        class="px-3 py-2 border rounded-md text-sm text-gray-700 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 hover:bg-gray-100 dark:hover:bg-gray-800">
-                        Limpiar filtros
-                    </button>
-                </div>
-            </form>
-
-            <!-- filtros extra y estadísticas por solicitante -->
-            <div class="mb-4 flex flex-col md:flex-row items-start md:items-center gap-4">
-                <div class="min-w-[220px]">
-                    <label for="solicitante"
-                        class="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Filtrar por
-                        solicitante</label>
-                    <select id="solicitante" v-model="filtroSolicitantePrecio"
-                        class="w-full p-2 border rounded-lg dark:bg-gray-700 dark:text-white">
-                        <option value="todos">Todos</option>
-                        <option v-for="s in solicitantesUnicos" :key="s" :value="s">{{ s }}</option>
-                    </select>
-                </div>
-
-                <div v-if="filtroSolicitantePrecio !== 'todos'" class="flex gap-3 ml-0 md:ml-4">
-                    <div class="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg shadow-sm min-w-[110px]">
-                        <p class="text-xs text-gray-500 dark:text-gray-400">Productos</p>
-                        <p class="font-bold text-gray-800 dark:text-white text-lg">{{ preciosSolicitanteStats.count }}
-                        </p>
-                    </div>
-                    <div class="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg shadow-sm min-w-[140px]">
-                        <p class="text-xs text-gray-500 dark:text-gray-400">Valor total</p>
-                        <p class="font-bold text-gray-800 dark:text-white text-lg">S/ {{
-                            Number(preciosSolicitanteStats.totalValue).toFixed(2) }}</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- tarjetas resumen -->
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                <div class="p-4 bg-indigo-50 dark:bg-indigo-900/30 rounded-xl shadow-sm">
-                    <div class="flex justify-between items-start">
-                        <div>
-                            <p class="text-sm text-gray-600 dark:text-gray-400">Valor Total</p>
-                            <p class="text-2xl font-bold text-indigo-600 dark:text-indigo-300">S/ {{
-                                Number(totalInventario).toFixed(2) }}</p>
-                        </div>
-                        <button @click="mostrarDetalleTotal = !mostrarDetalleTotal" aria-pressed="false"
-                            class="text-xs px-2 py-1 bg-indigo-200 dark:bg-indigo-700 rounded">
-                            {{ mostrarDetalleTotal ? 'Ocultar' : 'Ver detalle' }}
-                        </button>
-                    </div>
-
-                    <ul v-if="mostrarDetalleTotal" class="mt-3 text-sm max-h-40 overflow-y-auto pr-2">
-                        <li v-for="item in props.inventarios" :key="item.id" class="flex justify-between py-1">
-                            <span class="truncate max-w-[70%]">{{ item.descripcion }} ({{ item.stock }} × S/ {{
-                                Number(item.precio ?? 0).toFixed(2) }})</span>
-                            <span class="font-semibold">S/ {{ (Number(item.stock ?? 0) * Number(item.precio ??
-                                0)).toFixed(2)
-                                }}</span>
-                        </li>
-                    </ul>
-                </div>
-
-                <div class="p-4 bg-green-50 dark:bg-green-900/30 rounded-xl shadow-sm">
-                    <p class="text-sm text-gray-600 dark:text-gray-400">Entradas</p>
-                    <p class="text-xl font-bold text-green-600 dark:text-green-300">+ S/ {{
-                        Number(totalEntradas).toFixed(2) }}
-                    </p>
-                </div>
-
-                <div class="p-4 bg-red-50 dark:bg-red-900/30 rounded-xl shadow-sm">
-                    <p class="text-sm text-gray-600 dark:text-gray-400">Salidas</p>
-                    <p class="text-xl font-bold text-red-600 dark:text-red-300">- S/ {{ Number(totalSalidas).toFixed(2)
-                        }}</p>
-                </div>
-            </div>
-
-            <!-- Distribución por categoría -->
-            <section class="mb-6">
-                <h3 class="font-semibold text-gray-800 dark:text-gray-200 mb-3 flex items-center gap-2">Distribución por
-                    categoría</h3>
-                <div class="space-y-3">
-                    <template v-for="cat in categoriasResumenArray" :key="cat.cat">
-                        <div class="flex items-center gap-3">
-                            <div class="w-36 text-sm text-gray-700 dark:text-gray-300 truncate">{{ cat.cat }}</div>
-                            <div class="flex-1 bg-gray-100 dark:bg-gray-700 rounded overflow-hidden h-3">
-                                <div class="h-3 rounded"
-                                    :style="{ width: (Number(totalInventario) > 0 ? (Number(cat.val || 0) / Number(totalInventario)) * 100 : 0) + '%' }">
-                                </div>
-                            </div>
-                            <div class="w-28 text-right text-sm font-semibold dark:text-white">S/ {{ Number(cat.val ||
-                                0).toFixed(2) }}</div>
-                        </div>
-                    </template>
-                </div>
-            </section>
-
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                <!-- lateral: Top N -->
-                <aside class="lg:col-span-1 p-4 border rounded-lg dark:border-gray-700">
-                    <div class="flex justify-between items-center mb-2">
-                        <h4 class="font-semibold text-gray-800 dark:text-gray-200">Top {{ topN }} (por valor)</h4>
-                        <select v-model.number="topN" class="p-1 border rounded dark:bg-gray-700 dark:text-white">
-                            <option :value="5">5</option>
-                            <option :value="10">10</option>
-                            <option :value="20">20</option>
-                        </select>
-                    </div>
-
-                    <ol
-                        class="list-decimal ml-5 space-y-2 text-sm text-gray-700 dark:text-white max-h-72 overflow-y-auto">
-                        <li v-for="it in topItems" :key="it.id" class="flex justify-between items-center">
-                            <div class="truncate max-w-[60%]">{{ it.descripcion }}</div>
-                            <div class="text-sm font-semibold">S/ {{ (Number(it.stock ?? 0) * Number(it.precio ??
-                                0)).toFixed(2)
-                                }}</div>
-                        </li>
-                    </ol>
-                </aside>
-
-                <!-- tabla principal -->
-                <div class="lg:col-span-2 p-4 border rounded-lg dark:border-gray-700 overflow-x-auto">
-                    <table class="min-w-full text-sm text-left">
-                        <thead class="bg-gray-100 dark:bg-gray-700 dark:text-white">
-                            <tr>
-                                <th class="p-2">Código</th>
-                                <th class="p-2">Producto</th>
-                                <th class="p-2">Categoría</th>
-                                <th class="p-2">Stock</th>
-                                <th class="p-2">Precio</th>
-                                <th class="p-2">Valor total</th>
-                                <th class="p-2">Solicitado por</th>
-                            </tr>
-                        </thead>
-                        <!-- --- dentro de la tabla (reemplaza la sección <tbody> por esta) --- -->
-                        <tbody>
-                            <tr v-for="item in preciosFiltrados" :key="item.id"
-                                class="border-t dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 dark:text-white">
-                                <td class="p-2">{{ item.codigo }}</td>
-                                <td class="p-2">
-                                    <div class="flex items-center justify-between gap-2">
-                                        <div class="truncate max-w-[60%]">{{ item.descripcion }}</div>
-                                        <!-- Botón pequeño para ver salidas -->
-                                        <button @click="verSalidas(item)"
-                                            class="ml-2 text-xs px-2 py-1 border rounded text-gray-700 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 hover:bg-gray-100 dark:hover:bg-gray-800"
-                                            title="Ver salidas de este producto">
-                                            Ver salidas
-                                        </button>
-                                    </div>
-                                </td>
-                                <td class="p-2">{{ item.categoria }}</td>
-                                <td class="p-2 text-right">{{ item.stock }}</td>
-                                <td class="p-2 text-right">S/ {{ Number(item.precio ?? 0).toFixed(2) }}</td>
-                                <td class="p-2 font-semibold text-right">S/ {{ (Number(item.stock ?? 0) *
-                                    Number(item.precio ??
-                                        0)).toFixed(2) }}</td>
-                                <td class="p-2">{{ item.solicitado_por ?? '-' }}</td>
-                            </tr>
-
-                            <tr v-if="preciosFiltrados.length === 0">
-                                <td colspan="7" class="p-4 text-center text-gray-500 dark:text-gray-400">No hay ítems
-                                    que
-                                    coincidan.</td>
-                            </tr>
-                        </tbody>
-
-                        <!-- --- MODAL: Salidas del producto --- -->
-                        <div v-if="modalVisible" class="fixed inset-0 z-50 flex items-center justify-center p-4">
-                            <!-- backdrop -->
-                            <div class="absolute inset-0 bg-black/40 dark:bg-black/60" @click="modalVisible = false"
-                                aria-hidden></div>
-
-                            <!-- modal panel -->
-                            <div role="dialog" aria-modal="true"
-                                class="relative z-10 w-full max-w-3xl bg-white dark:bg-gray-800 rounded-2xl shadow-lg overflow-hidden">
-                                <!-- header -->
-                                <header class="flex items-start justify-between p-4 border-b dark:border-gray-700">
-                                    <div>
-                                        <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
-                                            Salidas — {{ currentProducto.nombre ?? currentCodigo ?? 'Producto' }}
-                                        </h3>
-                                        <p class="text-sm text-gray-500 dark:text-gray-400">
-                                            Código: <span class="font-medium text-gray-700 dark:text-gray-200">{{
-                                                currentProducto.codigo ?? currentCodigo }}</span>
-                                            <span v-if="currentProducto.stock !== null"> • Stock: <strong>{{
-                                                currentProducto.stock }}</strong></span>
-                                        </p>
-                                    </div>
-
-                                    <div class="flex items-center gap-2">
-                                        <button @click="modalVisible = false"
-                                            class="text-sm px-3 py-1 border rounded-md text-gray-700 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 hover:bg-gray-100 dark:hover:bg-gray-800">
-                                            Cerrar
-                                        </button>
-                                        <!-- ejemplo de exportar (implementa su método si quieres) -->
-                                        <button @click="() => { /* exportarLogica(currentCodigo) */ }"
-                                            class="text-sm px-3 py-1 bg-blue-500 text-white rounded-md hover:bg-blue-600">
-                                            Exportar
-                                        </button>
-                                    </div>
-                                </header>
-
-                                <!-- cuerpo: lista de salidas -->
-                                <div class="p-4 max-h-[60vh] overflow-y-auto">
-                                    <template v-if="salidasProducto && salidasProducto.length > 0">
-                                        <div class="mb-3 flex items-center justify-between gap-4">
-                                            <div class="text-sm text-gray-600 dark:text-gray-300">Se encontraron
-                                                <strong>{{ salidasProducto.length }}</strong> registro(s).
-                                            </div>
-                                            <div class="text-sm text-gray-600 dark:text-gray-300">Total (cantidad):
-                                                <strong>{{ total ?? '-' }}</strong>
-                                            </div>
-                                        </div>
-
-                                        <table class="w-full text-sm text-left">
-                                            <thead class="bg-gray-50 dark:bg-gray-700 sticky top-0 z-10">
-                                                <tr>
-                                                    <!-- columnas más comunes: ajusta según tu API -->
-                                                    <th class="p-2">Fecha</th>
-                                                    <th class="p-2">Nombre</th>
-                                                    <th class="p-2">Cantidad</th>
-                                                    <th class="p-2">Unidad de medida</th>
-                                                    <th class="p-2">Cantidad</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                <tr v-for="(s, idx) in salidasProducto" :key="s.id ?? idx"
-                                                    class="border-t dark:border-gray-700">
-                                                    <td class="p-2">
-                                                        <!-- intentamos formatear fecha si existe -->
-                                                        <span>{{ formatFecha ? formatFecha(s.fecha ?? s.created_at ??
-                                                            s.date) : (s.fecha ?? s.created_at ?? '-') }}</span>
-                                                    </td>
-                                                    <td class="p-2">{{ s.nombre ?? s.tipo ?? '-' }}</td>
-                                                    <td class="p-2 font-medium">{{ s.cantidad ?? s.qty ?? s.cant ??
-                                                        s.cantidad_salida ?? '-' }}</td>
-                                                    <td class="p-2">{{ s.um ?? s.solicitado_por ?? s.usuario ?? '-'
-                                                    }}</td>
-                                                    <td class="p-2">{{ s.cantidad ?? s.descripcion ?? '-' }}</td>
-                                                </tr>
-                                            </tbody>
-                                        </table>
-                                    </template>
-
-                                    <template v-else>
-                                        <div class="py-8 text-center text-gray-600 dark:text-gray-400">
-                                            No se encontraron registros de salidas para este producto.
-                                        </div>
-                                    </template>
-                                </div>
-
-                                <!-- footer: acciones rápidas -->
-                                <footer class="p-4 border-t dark:border-gray-700 flex items-center justify-between">
-                                    <div class="text-sm text-gray-600 dark:text-gray-300">
-                                        <strong>Total cantidad:</strong> {{ total ?? '—' }}
-                                    </div>
-                                    <div class="flex items-center gap-2">
-                                        <button @click="modalVisible = false"
-                                            class="px-3 py-2 border rounded-md text-gray-700 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 hover:bg-gray-100">Cerrar</button>
-                                        <button @click="() => { /* imprimirSalidas(currentCodigo) */ }"
-                                            class="px-3 py-2 bg-green-600 text-white rounded-md hover:bg-green-700">Imprimir</button>
-                                    </div>
-                                </footer>
-                            </div>
-                        </div>
-
-                    </table>
-                </div>
-            </div>
-        </section>
-
-
-        <div v-if="pestañaActiva === 'Contabilidad'"
-            class="p-5 rounded-2xl shadow-md mt-6 border bg-white dark:bg-gray-800">
-
-            <!-- ==========================
-       CONTABILIDAD (CAJA / BANCO / EASY)
-       ========================== -->
-            <div class="p-5 rounded-2xl shadow-md mt-6 border bg-white dark:bg-gray-800">
-                <!-- Header con pestañas y controles -->
-                <div class="flex items-center justify-between mb-4">
-                    <div class="flex items-center gap-3">
-                        <h2 class="text-lg font-bold text-gray-800 dark:text-gray-100">Libro de Contabilidad</h2>
-                        <span :class="badgeClass" class="text-sm px-3 py-1 rounded-full font-medium">
-                            {{ tablaVisibleLabel }}
-                        </span>
-                        <span class="text-xs text-gray-500 dark:text-gray-400 ml-2">— ventana activa</span>
-                    </div>
-
-                    <div class="flex items-center gap-3">
-                        <!-- Pestañas -->
-                        <div class="inline-flex rounded-md shadow-sm" role="tablist" aria-label="Tipo de tabla">
-                            <button @click="setTabla('caja')"
-                                :class="tablaVisible === 'caja' ? activeTabClass : tabClass"
-                                class="px-3 py-1.5 rounded-l">Caja</button>
-                            <button @click="setTabla('banco')"
-                                :class="tablaVisible === 'banco' ? activeTabClass : tabClass"
-                                class="px-3 py-1.5">Banco</button>
-                            <button @click="setTabla('easy')"
-                                :class="tablaVisible === 'easy' ? activeTabClass : tabClass"
-                                class="px-3 py-1.5 rounded-r">Easy</button>
-                        </div>
-
-                        <!-- Selector mes/año simple -->
-                        <div
-                            class="flex items-center gap-2 p-2 border rounded bg-gray-50 dark:text-white dark:bg-gray-900">
-                            <button @click="prevMonth" class="px-3 py-1 rounded bg-gray-100 dark:bg-gray-700">‹</button>
-                            <div class="px-4 text-center">
-                                <div class="text-sm text-gray-500">Mes / Año</div>
-                                <div class="text-base font-medium">{{ nombreMes(mesActivo) }} {{ anioActivo }}</div>
-                            </div>
-                            <button @click="nextMonth" class="px-3 py-1 rounded bg-gray-100 dark:bg-gray-700">›</button>
-                        </div>
-
-                        <!-- Acciones -->
-                        <div class="flex items-center gap-2">
-                            <button v-if="authUser && (authUser.role === 'admin')" @click="agregarAM"
-                                class="px-4 py-2 bg-green-500 text-white rounded-lg shadow hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-400 transition-colors duration-200">
-                                Agregar
-                            </button>
-
-                            <button v-if="authUser && (authUser.role === 'admin')" @click="agregarEASY"
-                                class="px-4 py-2 bg-green-500 text-white rounded-lg shadow hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-400 transition-colors duration-200">
-                                Agregar Easy
-                            </button>
-
-                            <button @click="exportarExcel(mesActivo, anioActivo)"
-                                class="px-3 py-1.5 rounded bg-yellow-600 text-white">Exportar a Excel</button>
-
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Línea informativa -->
-                <div class="text-sm text-gray-500 mb-2">
-                    Mostrando: <strong>{{ tablaVisibleLabel }}</strong> — {{ nombreMes(mesActivo) }} {{ anioActivo }}
-                </div>
-
-                <!-- Tablas -->
-                <div>
-                    <!-- ================= CAJA ================= -->
-                    <div v-if="tablaVisible === 'caja'">
-                        <table class="min-w-full text-sm text-left border dark:border-gray-700">
-                            <thead
-                                class="sticky top-0 z-10 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-100">
-                                <tr>
-                                    <th class="p-3">N° Acta</th>
-                                    <th class="p-3">Fecha</th>
-                                    <th class="p-3">Descripción</th>
-                                    <th class="p-3">Presupuestario</th>
-                                    <th class="p-3">Actividad</th>
-                                    <th class="p-3">Ingresos</th>
-                                    <th class="p-3">Egresos</th>
-                                    <th class="p-3">Saldo</th>
-                                    <th v-if="authUser && (authUser.role === 'admin' || authUser.role === 'equipo')"
-                                        class="p-3">Acciones</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <!-- SALDO APERTURA (mes anterior) - siempre al inicio -->
-                                <tr class="bg-gray-50 dark:bg-gray-800 text-sm dark:text-white">
-                                    <td class="p-3" colspan="5">
-                                        Saldo apertura — {{ nombreMes(mesActivo === 1 ? 12 : mesActivo - 1) }}
-                                        {{ mesActivo === 1 ? (anioActivo - 1) : anioActivo }}
-                                    </td>
-                                    <td class="p-3"></td>
-                                    <td class="p-3"></td>
-                                    <td class="p-3 font-semibold">{{ formatNumber(aperturaCaja) }}</td>
-                                    <td v-if="authUser && (authUser.role === 'admin' || authUser.role === 'equipo')"
-                                        class="p-3"></td>
-                                </tr>
-
-                                <!-- FILAS DE ACTAS (sí muestran saldo) -->
-                                <tr v-for="acta in actasCajaFiltradas" :key="acta.id"
-                                    class="border-t dark:text-white dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700 transition">
-                                    <td class="p-3">{{ acta.n_acta }}</td>
-                                    <td class="p-3">{{ acta.fecha }}</td>
-                                    <td class="p-3">{{ acta.descripcion }}</td>
-                                    <td class="p-3">{{ acta.presupuestario }}</td>
-                                    <td class="p-3">{{ acta.actividad }}</td>
-                                    <td class="p-3 text-green-600 font-semibold">{{ formatNumber(acta.ingresos) }}</td>
-                                    <td class="p-3 text-red-600 font-semibold">{{ formatNumber(acta.egresos) }}</td>
-                                    <td class="p-3 font-bold">{{ formatNumber(acta.saldo) }}</td>
-
-                                    <!-- dentro de la celda de acciones de CAJA -->
-                                    <td v-if="authUser && (authUser.role === 'admin' || authUser.role === 'equipo')"
-                                        class="p-3 flex gap-2 items-center">
-                                        <a :href="`/proyectos/${proyecto.id}/amcaja/${acta.id}/edit`"
-                                            class="flex items-center justify-center w-9 h-9 bg-blue-500 text-white rounded-lg">✏️</a>
-
-                                        <button @click="eliminarCaja(acta.id)" title="Eliminar"
-                                            class="flex items-center justify-center w-9 h-9 bg-red-500 text-white rounded-lg">🗑️
-                                        </button>
-
-
-                                        <button @click="abrirCrearEasyConActa(acta)"
-                                            title="Abrir Crear EASY (pre-llenado)"
-                                            class="flex items-center justify-center w-9 h-9 bg-indigo-600 text-white rounded-lg">
-                                            ➕
-                                        </button>
-                                    </td>
-
-                                </tr>
-
-                                <tr v-if="!actasCajaFiltradas || actasCajaFiltradas.length === 0">
-                                    <td class="p-3 text-gray-500 italic" colspan="9">No hay registros en Caja.</td>
-                                </tr>
-
-                                <!-- ÚLTIMO SALDO REGISTRADO (solo uno) -->
-                                <tr class="bg-gray-50 dark:bg-gray-800 text-sm dark:text-white">
-                                    <td class="p-3" colspan="5">Último saldo registrado</td>
-                                    <td class="p-3"></td>
-                                    <td class="p-3"></td>
-                                    <td class="p-3 font-semibold">{{ formatNumber(ultimoSaldo) }}</td>
-                                    <td v-if="authUser && (authUser.role === 'admin' || authUser.role === 'equipo')"
-                                        class="p-3"></td>
-                                </tr>
-
-                                <!-- TOTALES DEL MES -->
-                                <tr class="border-t bg-gray-50 dark:bg-gray-800 font-semibold dark:text-white">
-                                    <td class="p-3" colspan="5">Totales del mes — Movimientos</td>
-                                    <td class="p-3 text-green-700">{{ formatNumber(ingresosCajaTotal) }}</td>
-                                    <td class="p-3 text-red-600">{{ formatNumber(egresosCajaTotal) }}</td>
-                                    <td class="p-3">{{ formatNumber(movimientosCaja) }}</td>
-                                    <td v-if="authUser && (authUser.role === 'admin' || authUser.role === 'equipo')"
-                                        class="p-3"></td>
-                                </tr>
-                            </tbody>
-
-                        </table>
-                    </div>
-
-                    <!-- ================= BANCO ================= -->
-                    <div v-if="tablaVisible === 'banco'">
-                        <table class="min-w-full text-sm text-left border dark:border-gray-700">
-                            <thead
-                                class="sticky top-0 z-10 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-100">
-                                <tr>
-                                    <th class="p-3">N° Acta</th>
-                                    <th class="p-3">Fecha</th>
-                                    <th class="p-3">Descripción</th>
-                                    <th class="p-3">Presupuestario</th>
-                                    <th class="p-3">Actividad</th>
-                                    <th class="p-3">Ingresos</th>
-                                    <th class="p-3">Egresos</th>
-                                    <th class="p-3">Saldo</th>
-                                    <th class="p-3">Acciones</th>
-                                    <th class="p-3">funsiones</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <!-- SALDO APERTURA BANCO (siempre al inicio) -->
-                                <tr class="bg-gray-50 dark:bg-gray-800 text-sm dark:text-white">
-                                    <td class="p-3" colspan="5">
-                                        Saldo apertura — {{ nombreMes(mesActivo === 1 ? 12 : mesActivo - 1) }}
-                                        {{ mesActivo === 1 ? (anioActivo - 1) : anioActivo }}
-                                    </td>
-                                    <td class="p-3"></td>
-                                    <td class="p-3"></td>
-                                    <td class="p-3 font-semibold">{{ formatNumber(aperturaBanco) }}</td>
-                                    <td class="p-3"></td>
-                                    <td class="p-3"></td>
-                                </tr>
-
-                                <!-- FILAS DE ACTAS (muestran su propio saldo) -->
-                                <tr v-for="acta in actasBancoFiltradas" :key="acta.id"
-                                    class="border-t dark:text-white dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700 transition">
-                                    <td class="p-3">{{ acta.n_acta }}</td>
-                                    <td class="p-3">{{ acta.fecha }}</td>
-                                    <td class="p-3">{{ acta.descripcion }}</td>
-                                    <td class="p-3">{{ acta.presupuestario }}</td>
-                                    <td class="p-3">{{ acta.actividad }}</td>
-                                    <td class="p-3 text-green-600 font-semibold">{{ formatNumber(acta.ingresos) }}</td>
-                                    <td class="p-3 text-red-600 font-semibold">{{ formatNumber(acta.egresos) }}</td>
-                                    <td class="p-3 font-bold">{{ formatNumber(acta.saldo) }}</td>
-                                    <td class="p-3">{{ acta.accion }}</td>
-                                    <td class="p-3 flex gap-2 items-center">
-                                        <a :href="`/proyectos/${proyecto.id}/ambanco/${acta.id}/edit`"
-                                            class="flex items-center justify-center w-9 h-9 bg-green-500 text-white rounded-lg">✏️</a>
-                                        <button @click="eliminarBanco(acta.id)" title="Eliminar"
-                                            class="flex items-center justify-center w-9 h-9 bg-red-500 text-white rounded-lg">🗑️
-                                        </button>
-
-                                        <!-- BOTÓN NUEVO: enviar a EASY -->
-                                        <button @click="enviarActaAEasy(acta, 'banco')" title="Enviar a Easy"
-                                            class="flex items-center justify-center w-9 h-9 bg-indigo-600 text-white rounded-lg">➡️</button>
-
-                                    </td>
-
-
-                                </tr>
-
-                                <tr v-if="!actasBancoFiltradas || actasBancoFiltradas.length === 0">
-                                    <td class="p-3 text-gray-500 italic" colspan="10">No hay registros en Banco.</td>
-                                </tr>
-
-                                <!-- ÚLTIMO SALDO REGISTRADO (solo uno) -->
-                                <tr class="bg-gray-50 dark:bg-gray-800 text-sm dark:text-white">
-                                    <td class="p-3" colspan="5">Último saldo registrado</td>
-                                    <td class="p-3"></td>
-                                    <td class="p-3"></td>
-                                    <td class="p-3 font-semibold">{{ formatNumber(ultimoSaldoBanco) }}</td>
-                                    <td class="p-3"></td>
-                                    <td class="p-3"></td>
-                                </tr>
-
-                                <!-- TOTALES BANCO (final) -->
-                                <tr class="border-t bg-gray-50 dark:bg-gray-800 font-semibold dark:text-white">
-                                    <td class="p-3" colspan="5">Totales del mes — Movimientos</td>
-                                    <td class="p-3 text-green-700">{{ formatNumber(ingresosBancoTotal) }}</td>
-                                    <td class="p-3 text-red-600">{{ formatNumber(egresosBancoTotal) }}</td>
-                                    <td class="p-3">{{ formatNumber(movimientosBanco) }}</td>
-                                    <td class="p-3"></td>
-                                    <td class="p-3"></td>
-                                </tr>
-                            </tbody>
-
-                        </table>
-                    </div>
-
-                    <!-- ================= EASY ================= -->
-                    <div v-if="tablaVisible === 'easy'">
-                        <div class="overflow-x-auto">
-                            <table class="w-full table-auto text-sm text-left border dark:border-gray-700">
-                                <thead
-                                    class="sticky top-0 z-10 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-100">
-                                    <tr>
-                                        <!-- Columnas tipo Excel (ordenadas para lectura contable) -->
-                                        <th class="p-2">Codigo general</th>
-                                        <th class="p-2">Gasto (PEN)</th>
-                                        <th class="p-2">Receta (PEN)</th>
-                                        <th class="p-2">Moneda de facturación</th>
-                                        <th class="p-2">Débito (EUR)</th>
-                                        <th class="p-2">Crédito (EUR)</th>
-                                        <th class="p-2">Moneda de gestión</th>
-                                        <th class="p-2">Numeración y descripción</th>
-                                        <th class="p-2">código de presupuesto</th>
-                                        <th class="p-2">Naturaleza</th>
-                                        <th class="p-2">Contrato</th>
-                                        <th class="p-2">Donantes</th>
-                                        <th class="p-2">Fecha</th>
-                                        <th class="p-2">Acciones</th>
-                                    </tr>
-                                </thead>
-
-                                <tbody>
-                                    <!-- FILAS DE ITEMS -->
-                                    <tr v-for="(item, idx) in itemsEasyFiltrados" :key="item.id"
-                                        class="border-t dark:text-white dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700 transition">
-                                        <td class="p-2">{{ item.cuenta_general }}</td>
-                                        <td class="p-2">{{ item.gasto_moneda_local }}</td>
-                                        <td class="p-2">{{ item.ingreso_moneda_local }}</td>
-                                        <td class="p-2">{{ item.moneda_facturacion }}</td>
-                                        <td class="p-2">{{ item.debito_moneda_gestion }}</td>
-                                        <td class="p-2">{{ item.credito_moneda_gestion }}</td>
-                                        <td class="p-2">{{ item.moneda_gestion }}</td>
-                                        <td class="p-2">{{ item.numero_descripcion_pieza }}</td>
-                                        <td class="p-2">{{ item.codigo_presupuestario }}</td>
-                                        <td class="p-2">{{ item.naturaleza_presupuesto }}</td>
-                                        <td class="p-2">{{ item.contrato }}</td>
-                                        <td class="p-2">{{ item.bailleur_fondos }}</td>
-                                        <td class="p-2">{{ item.fecha }}</td>
-                                        <td class="p-3 flex gap-2 items-center">
-                                            <!-- simple: solo proyecto.id y item.id -->
-                                            <a :href="`/proyectos/${proyecto.id}/easy/${item.id}/edit`"
-                                                class="flex items-center justify-center w-9 h-9 bg-blue-500 text-white rounded-lg">✏️</a>
-
-                                            <button @click="eliminarActa(item.id)"
-                                                class="flex items-center justify-center w-9 h-9 bg-red-500 text-white rounded-lg">🗑️</button>
-                                        </td>
-                                    </tr>
-
-                                    <!-- SIN REGISTROS -->
-                                    <tr v-if="!itemsEasyFiltrados || itemsEasyFiltrados.length === 0">
-                                        <td class="p-2 italic text-gray-500" colspan="14">No hay registros Easy.</td>
-                                    </tr>
-
-                                    <!-- TOTALES EASY -->
-                                    <tr class="border-t bg-gray-50 dark:bg-gray-800 font-semibold dark:text-white">
-                                        <td class="p-2" colspan="2">Totales del mes — Movimientos</td>
-                                        <td class="p-2 text-black-700 dark:text-white">Total (Moneda local): {{
-                                            formatNumber(egresosEasyTotal) }}</td>
-                                        <td></td>
-                                        <td class="p-2 text-black-700 dark:text-white">Total (Moneda gestión): {{
-                                            formatNumber(egresosgestiónEasyTotal) }}</td>
-                                        <td colspan="9"></td>
-                                    </tr>
-                                </tbody>
-
-                            </table>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- /Tablas -->
-        </div>
 
 
         <div class="py-12 space-y-10">
+
             <!-- Tabla Inventarios -->
             <div v-if="pestañaActiva === 'inventario'" class="bg-white dark:bg-gray-800 shadow sm:rounded-lg p-6">
                 <h3 class="text-lg font-bold mb-4 text-gray-800 dark:text-gray-200">Inventarios</h3>
@@ -1629,9 +1174,7 @@ function eliminarActa(id) {
                     <div class="flex flex-wrap items-center gap-2">
                         <button @click="toggleOrdenInventario"
                             class="px-4 py-2 bg-gray-700 text-white rounded-lg shadow hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-500 transition-colors duration-200 dark:bg-gray-200 dark:text-gray-800 dark:hover:bg-gray-300">
-                            📅 Ordenar: <span class="font-semibold">{{ ordenInventarioAsc ? 'Antiguos' :
-                                'Recientes'
-                                }}</span>
+                            📅 Ordenar: <span class="font-semibold">{{ ordenInventarioAsc ? 'Antiguos' : 'Recientes'}}</span>
                         </button>
                         <button @click="refrescarInventario"
                             class="px-4 py-2 bg-blue-500 text-white rounded-lg shadow hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-400 transition-colors duration-200">
@@ -1737,12 +1280,12 @@ function eliminarActa(id) {
                             <div class="mb-4 text-sm text-gray-700 dark:text-gray-200">
                                 <div><strong>Producto:</strong> {{ currentProducto.nombre ??
                                     (salidasProducto[0]?.producto_label
-                                        ?? salidasProducto[0]?.producto ?? '—') }}</div>
+                                    ?? salidasProducto[0]?.producto ?? '—') }}</div>
                                 <div><strong>Código:</strong> {{ currentProducto.codigo ?? currentCodigo ??
                                     (salidasProducto[0]?.producto_code ?? salidasProducto[0]?.codigo ?? '—') }}
                                 </div>
-                                <div v-if="currentProducto.stock !== null"><strong>Stock:</strong> {{
-                                    currentProducto.stock }}
+                                <div v-if="currentProducto.stock !== null"><strong>Stock:</strong>
+                                    {{ currentProducto.stock }}
                                 </div>
                             </div>
 
@@ -1767,7 +1310,7 @@ function eliminarActa(id) {
                                         <tr v-for="s in salidasProducto" :key="s.id"
                                             class="border-t dark:border-gray-700">
                                             <td class="p-2">{{ s.n_acta ?? s.nacta ?? '—' }}</td>
-                                            <td class="p-2">{{ s.nombre ?? s.persona ?? s.persona_nombre ?? '—'}}</td>
+                                            <td class="p-2">{{ s.nombre ?? s.persona ?? s.persona_nombre ?? '—' }}</td>
                                             <td class="p-2">{{ s.lugar ?? s.site ?? '—' }}</td>
                                             <td class="p-2">{{ s.distrito ?? s.district ?? '—' }}</td>
                                             <td class="p-2">{{ formatFecha(s.fecha) }}</td>
@@ -1877,12 +1420,17 @@ function eliminarActa(id) {
 
                                 <!-- Columna estado -->
                                 <td class="p-3">
-                                    <button @click="cambiarEstado(salida)" :class="[
-                                        'px-3 py-1 rounded-lg font-semibold text-white text-xs shadow transition',
-                                        salida.estado === 'pendiente'
-                                            ? 'bg-red-500 hover:bg-red-600'
-                                            : 'bg-green-500 hover:bg-green-600'
-                                    ]">
+                                    <button
+                                        @click="user.role === 'admin' && cambiarEstado(salida)"
+                                        :disabled="user.role !== 'admin'"
+                                        :class="[
+                                            'px-3 py-1 rounded-lg font-semibold text-white text-xs shadow transition',
+                                            salida.estado === 'pendiente'
+                                                ? 'bg-red-500 hover:bg-red-600'
+                                                : 'bg-green-500 hover:bg-green-600',
+                                            user.role !== 'admin' ? 'opacity-50 cursor-not-allowed' : ''
+                                        ]"
+                                    >
                                         {{ salida.estado }}
                                     </button>
                                 </td>
@@ -1931,6 +1479,862 @@ function eliminarActa(id) {
                             </tr>
                         </tbody>
                     </table>
+                </div>
+            </div>
+
+            <!-- Resumen de Inventario — Precios (mejorado) -->
+            <section v-if="pestañaActiva === 'Precios'"
+                class="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-lg mt-6 border border-gray-200 dark:border-gray-700 transition">
+                <header class="flex items-start justify-between gap-4 mb-6">
+                    <div class="flex items-center gap-3">
+                        <!-- Icono SVG profesional -->
+                        <svg class="w-8 h-8 text-indigo-500 dark:text-indigo-300" viewBox="0 0 24 24" fill="none"
+                            aria-hidden>
+                            <path d="M3 13h4v8H3zM10 8h4v13h-4zM17 3h4v18h-4z" fill="currentColor" opacity="0.9" />
+                        </svg>
+                        <div>
+                            <h2 class="text-2xl font-extrabold text-gray-900 dark:text-gray-100">Resumen de Inventario —
+                                Precios
+                            </h2>
+                            <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Filtros rápidos, estadísticas y
+                                lista
+                                de
+                                productos por valor.</p>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center gap-2">
+                        <button @click="refrescarInventario"
+                            class="inline-flex items-center gap-2 px-3 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-300">
+                            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none">
+                                <path d="M21 12a9 9 0 1 0-1.46 4.9" stroke="currentColor" stroke-width="1.5"
+                                    stroke-linecap="round" stroke-linejoin="round" />
+                            </svg>
+                            Refrescar
+                        </button>
+                    </div>
+                </header>
+
+                <!-- filtros -->
+                <form @submit.prevent class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end mb-6">
+                    <div>
+                        <label for="buscar"
+                            class="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Buscar
+                            (código /
+                            producto)</label>
+                        <input id="buscar" v-model="filtroPrecioBuscar" type="search" placeholder="Buscar..."
+                            class="w-full p-2 border rounded-lg dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-indigo-200 dark:focus:ring-indigo-700" />
+                    </div>
+
+                    <div class="flex gap-2 items-end">
+                        <div>
+                            <label for="precio-min"
+                                class="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Precio
+                                min</label>
+                            <input id="precio-min" v-model.number="filtroPrecioMin" type="number" min="0" step="0.01"
+                                class="p-2 border rounded-lg w-36 dark:bg-gray-700 dark:text-white" />
+                        </div>
+                        <div>
+                            <label for="precio-max"
+                                class="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Precio
+                                max</label>
+                            <input id="precio-max" v-model.number="filtroPrecioMax" type="number" min="0" step="0.01"
+                                class="p-2 border rounded-lg w-36 dark:bg-gray-700 dark:text-white" />
+                        </div>
+                    </div>
+
+                    <div class="flex justify-end md:justify-start">
+                        <button @click="limpiarFiltrosPrecio"
+                            class="px-3 py-2 border rounded-md text-sm text-gray-700 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 hover:bg-gray-100 dark:hover:bg-gray-800">
+                            Limpiar filtros
+                        </button>
+                    </div>
+                </form>
+
+                <!-- filtros extra y estadísticas por solicitante -->
+                <div class="mb-4 flex flex-col md:flex-row items-start md:items-center gap-4">
+                    <div class="min-w-[220px]">
+                        <label for="solicitante"
+                            class="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Filtrar
+                            por
+                            solicitante</label>
+                        <select id="solicitante" v-model="filtroSolicitantePrecio"
+                            class="w-full p-2 border rounded-lg dark:bg-gray-700 dark:text-white">
+                            <option value="todos">Todos</option>
+                            <option v-for="s in solicitantesUnicos" :key="s" :value="s">{{ s }}</option>
+                        </select>
+                    </div>
+
+                    <div v-if="filtroSolicitantePrecio !== 'todos'" class="flex gap-3 ml-0 md:ml-4">
+                        <div class="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg shadow-sm min-w-[110px]">
+                            <p class="text-xs text-gray-500 dark:text-gray-400">Productos</p>
+                            <p class="font-bold text-gray-800 dark:text-white text-lg">{{preciosSolicitanteStats.count}}
+                            </p>
+                        </div>
+                        <div class="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg shadow-sm min-w-[140px]">
+                            <p class="text-xs text-gray-500 dark:text-gray-400">Valor total</p>
+                            <p class="font-bold text-gray-800 dark:text-white text-lg">S/ {{Number(preciosSolicitanteStats.totalValue).toFixed(2) }}</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- tarjetas resumen -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                    <div class="p-4 bg-indigo-50 dark:bg-indigo-900/30 rounded-xl shadow-sm">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <p class="text-sm text-gray-600 dark:text-gray-400">Valor Total</p>
+                                <p class="text-2xl font-bold text-indigo-600 dark:text-indigo-300">S/ {{Number(totalInventario).toFixed(2) }}</p>
+                            </div>
+                            <button @click="mostrarDetalleTotal = !mostrarDetalleTotal" aria-pressed="false"
+                                class="text-xs px-2 py-1 bg-indigo-200 dark:bg-indigo-700 rounded">
+                                {{ mostrarDetalleTotal ? 'Ocultar' : 'Ver detalle' }}
+                            </button>
+                        </div>
+
+                        <ul v-if="mostrarDetalleTotal" class="mt-3 text-sm max-h-40 overflow-y-auto pr-2">
+                            <li v-for="item in props.inventarios" :key="item.id" class="flex justify-between py-1">
+                                <span class="truncate max-w-[70%]">{{ item.descripcion }} ({{ item.stock }} × S/ {{Number(item.precio ?? 0).toFixed(2) }})</span>
+                                <span class="font-semibold">S/ {{ (Number(item.stock ?? 0) * Number(item.precio ?? 0)).toFixed(2)}}</span>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <div class="p-4 bg-green-50 dark:bg-green-900/30 rounded-xl shadow-sm">
+                        <p class="text-sm text-gray-600 dark:text-gray-400">Entradas</p>
+                        <p class="text-xl font-bold text-green-600 dark:text-green-300">+ S/ {{Number(totalEntradas).toFixed(2) }}
+                        </p>
+                    </div>
+
+                    <div class="p-4 bg-red-50 dark:bg-red-900/30 rounded-xl shadow-sm">
+                        <p class="text-sm text-gray-600 dark:text-gray-400">Salidas</p>
+                        <p class="text-xl font-bold text-red-600 dark:text-red-300">- S/ {{Number(totalSalidas).toFixed(2)}}</p>
+                    </div>
+                </div>
+
+                <!-- Distribución por categoría -->
+                <section class="mb-6">
+                    <h3 class="font-semibold text-gray-800 dark:text-gray-200 mb-3 flex items-center gap-2">Distribución
+                        por
+                        categoría</h3>
+                    <div class="space-y-3">
+                        <template v-for="cat in categoriasResumenArray" :key="cat.cat">
+                            <div class="flex items-center gap-3">
+                                <div class="w-36 text-sm text-gray-700 dark:text-gray-300 truncate">{{ cat.cat }}</div>
+                                <div class="flex-1 bg-gray-100 dark:bg-gray-700 rounded overflow-hidden h-3">
+                                    <div class="h-3 rounded"
+                                        :style="{ width: (Number(totalInventario) > 0 ? (Number(cat.val || 0) / Number(totalInventario)) * 100 : 0) + '%' }">
+                                    </div>
+                                </div>
+                                <div class="w-28 text-right text-sm font-semibold dark:text-white">S/ {{ Number(cat.val || 0).toFixed(2) }}</div>
+                            </div>
+                        </template>
+                    </div>
+                </section>
+
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                    <!-- lateral: Top N -->
+                    <aside class="lg:col-span-1 p-4 border rounded-lg dark:border-gray-700">
+                        <div class="flex justify-between items-center mb-2">
+                            <h4 class="font-semibold text-gray-800 dark:text-gray-200">Top {{ topN }} (por valor)</h4>
+                            <select v-model.number="topN" class="p-1 border rounded dark:bg-gray-700 dark:text-white">
+                                <option :value="5">5</option>
+                                <option :value="10">10</option>
+                                <option :value="20">20</option>
+                            </select>
+                        </div>
+
+                        <ol
+                            class="list-decimal ml-5 space-y-2 text-sm text-gray-700 dark:text-white max-h-72 overflow-y-auto">
+                            <li v-for="it in topItems" :key="it.id" class="flex justify-between items-center">
+                                <div class="truncate max-w-[60%]">{{ it.descripcion }}</div>
+                                <div class="text-sm font-semibold">S/ {{ (Number(it.stock ?? 0) * Number(it.precio ?? 0)).toFixed(2) }}</div>
+                            </li>
+                        </ol>
+                    </aside>
+
+                    <!-- tabla principal -->
+                    <div class="lg:col-span-2 p-4 border rounded-lg dark:border-gray-700 overflow-x-auto">
+                        <table class="min-w-full text-sm text-left">
+                            <thead class="bg-gray-100 dark:bg-gray-700 dark:text-white">
+                                <tr>
+                                    <th class="p-2">Código</th>
+                                    <th class="p-2">Producto</th>
+                                    <th class="p-2">Categoría</th>
+                                    <th class="p-2">Stock</th>
+                                    <th class="p-2">Precio</th>
+                                    <th class="p-2">Valor total</th>
+                                    <th class="p-2">Solicitado por</th>
+                                </tr>
+                            </thead>
+                            <!-- --- dentro de la tabla (reemplaza la sección <tbody> por esta) --- -->
+                            <tbody>
+                                <tr v-for="item in preciosFiltrados" :key="item.id"
+                                    class="border-t dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 dark:text-white">
+                                    <td class="p-2">{{ item.codigo }}</td>
+                                    <td class="p-2">
+                                        <div class="flex items-center justify-between gap-2">
+                                            <div class="truncate max-w-[60%]">{{ item.descripcion }}</div>
+                                            <!-- Botón pequeño para ver salidas -->
+                                            <button @click="verSalidas(item)"
+                                                class="ml-2 text-xs px-2 py-1 border rounded text-gray-700 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 hover:bg-gray-100 dark:hover:bg-gray-800"
+                                                title="Ver salidas de este producto">
+                                                Ver salidas
+                                            </button>
+                                        </div>
+                                    </td>
+                                    <td class="p-2">{{ item.categoria }}</td>
+                                    <td class="p-2 text-right">{{ item.stock }}</td>
+                                    <td class="p-2 text-right">S/ {{ Number(item.precio ?? 0).toFixed(2) }}</td>
+                                    <td class="p-2 font-semibold text-right">S/ {{ (Number(item.stock ?? 0) * Number(item.precio ?? 0)).toFixed(2) }}</td>
+                                    <td class="p-2">{{ item.solicitado_por ?? '-' }}</td>
+                                </tr>
+
+                                <tr v-if="preciosFiltrados.length === 0">
+                                    <td colspan="7" class="p-4 text-center text-gray-500 dark:text-gray-400">No hay
+                                        ítems
+                                        que
+                                        coincidan.</td>
+                                </tr>
+                            </tbody>
+
+                            <!-- --- MODAL: Salidas del producto --- -->
+                            <div v-if="modalVisible" class="fixed inset-0 z-50 flex items-center justify-center p-4">
+                                <!-- backdrop -->
+                                <div class="absolute inset-0 bg-black/40 dark:bg-black/60" @click="modalVisible = false"
+                                    aria-hidden></div>
+
+                                <!-- modal panel -->
+                                <div role="dialog" aria-modal="true"
+                                    class="relative z-10 w-full max-w-3xl bg-white dark:bg-gray-800 rounded-2xl shadow-lg overflow-hidden">
+                                    <!-- header -->
+                                    <header class="flex items-start justify-between p-4 border-b dark:border-gray-700">
+                                        <div>
+                                            <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                                                Salidas — {{ currentProducto.nombre ?? currentCodigo ?? 'Producto' }}
+                                            </h3>
+                                            <p class="text-sm text-gray-500 dark:text-gray-400">
+                                                Código: <span class="font-medium text-gray-700 dark:text-gray-200">{{currentProducto.codigo ?? currentCodigo }}</span>
+                                                <span v-if="currentProducto.stock !== null"> • Stock: <strong>{{currentProducto.stock }}</strong></span>
+                                            </p>
+                                        </div>
+
+                                        <div class="flex items-center gap-2">
+                                            <button @click="modalVisible = false"
+                                                class="text-sm px-3 py-1 border rounded-md text-gray-700 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 hover:bg-gray-100 dark:hover:bg-gray-800">
+                                                Cerrar
+                                            </button>
+                                            <!-- ejemplo de exportar (implementa su método si quieres) -->
+                                            <button @click="() => { /* exportarLogica(currentCodigo) */ }"
+                                                class="text-sm px-3 py-1 bg-blue-500 text-white rounded-md hover:bg-blue-600">
+                                                Exportar
+                                            </button>
+                                        </div>
+                                    </header>
+
+                                    <!-- cuerpo: lista de salidas -->
+                                    <div class="p-4 max-h-[60vh] overflow-y-auto">
+                                        <template v-if="salidasProducto && salidasProducto.length > 0">
+                                            <div class="mb-3 flex items-center justify-between gap-4">
+                                                <div class="text-sm text-gray-600 dark:text-gray-300">Se encontraron
+                                                    <strong>{{ salidasProducto.length }}</strong> registro(s).
+                                                </div>
+                                                <div class="text-sm text-gray-600 dark:text-gray-300">Total (cantidad):
+                                                    <strong>{{ total ?? '-' }}</strong>
+                                                </div>
+                                            </div>
+
+                                            <table class="w-full text-sm text-left">
+                                                <thead class="bg-gray-50 dark:bg-gray-700 sticky top-0 z-10">
+                                                    <tr>
+                                                        <!-- columnas más comunes: ajusta según tu API -->
+                                                        <th class="p-2">Fecha</th>
+                                                        <th class="p-2">Nombre</th>
+                                                        <th class="p-2">Cantidad</th>
+                                                        <th class="p-2">Unidad de medida</th>
+                                                        <th class="p-2">Cantidad</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <tr v-for="(s, idx) in salidasProducto" :key="s.id ?? idx"
+                                                        class="border-t dark:border-gray-700">
+                                                        <td class="p-2">
+                                                            <!-- intentamos formatear fecha si existe -->
+                                                            <span>{{ formatFecha ? formatFecha(s.fecha ?? s.created_at ?? s.date) : (s.fecha ?? s.created_at ?? '-') }}</span>
+                                                        </td>
+                                                        <td class="p-2">{{ s.nombre ?? s.tipo ?? '-' }}</td>
+                                                        <td class="p-2 font-medium">{{ s.cantidad ?? s.qty ?? s.cant ?? s.cantidad_salida ?? '-' }}</td>
+                                                        <td class="p-2">{{ s.um ?? s.solicitado_por ?? s.usuario ?? '-' }}</td>
+                                                        <td class="p-2">{{ s.cantidad ?? s.descripcion ?? '-' }}</td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </template>
+
+                                        <template v-else>
+                                            <div class="py-8 text-center text-gray-600 dark:text-gray-400">
+                                                No se encontraron registros de salidas para este producto.
+                                            </div>
+                                        </template>
+                                    </div>
+
+                                    <!-- footer: acciones rápidas -->
+                                    <footer class="p-4 border-t dark:border-gray-700 flex items-center justify-between">
+                                        <div class="text-sm text-gray-600 dark:text-gray-300">
+                                            <strong>Total cantidad:</strong> {{ total ?? '—' }}
+                                        </div>
+                                        <div class="flex items-center gap-2">
+                                            <button @click="modalVisible = false"
+                                                class="px-3 py-2 border rounded-md text-gray-700 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 hover:bg-gray-100">Cerrar</button>
+                                            <button @click="() => { /* imprimirSalidas(currentCodigo) */ }"
+                                                class="px-3 py-2 bg-green-600 text-white rounded-md hover:bg-green-700">Imprimir</button>
+                                        </div>
+                                    </footer>
+                                </div>
+                            </div>
+
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <div v-if="pestañaActiva === 'Contabilidad'"
+                class="p-5 rounded-2xl shadow-md mt-6 border bg-white dark:bg-gray-800">
+                <div class="p-5 rounded-2xl shadow-md mt-6 border bg-white dark:bg-gray-800">
+                    <!-- Header con pestañas y controles -->
+                    <div class="flex items-center justify-between mb-4">
+                        <div class="flex items-center gap-3">
+                            <h2 class="text-lg font-bold text-gray-800 dark:text-gray-100">Libro de Contabilidad</h2>
+                            <span :class="badgeClass" class="text-sm px-3 py-1 rounded-full font-medium">
+                                {{ tablaVisibleLabel }}
+                            </span>
+                            <span class="text-xs text-gray-500 dark:text-gray-400 ml-2">— ventana activa</span>
+                        </div>
+
+                        <div class="flex items-center gap-3">
+                            <!-- Pestañas -->
+                            <div class="inline-flex rounded-md shadow-sm" role="tablist" aria-label="Tipo de tabla">
+                                <button @click="setTabla('caja')"
+                                    :class="tablaVisible === 'caja' ? activeTabClass : tabClass"
+                                    class="px-3 py-1.5 rounded-l">Caja</button>
+                                <button @click="setTabla('banco')"
+                                    :class="tablaVisible === 'banco' ? activeTabClass : tabClass"
+                                    class="px-3 py-1.5">Banco</button>
+                                <button @click="setTabla('easy')"
+                                    :class="tablaVisible === 'easy' ? activeTabClass : tabClass"
+                                    class="px-3 py-1.5 rounded-r">Easy</button>
+                            </div>
+
+                            <!-- Selector mes/año simple -->
+                            <div
+                                class="flex items-center gap-2 p-2 border rounded bg-gray-50 dark:text-white dark:bg-gray-900">
+                                <button @click="prevMonth"
+                                    class="px-3 py-1 rounded bg-gray-100 dark:bg-gray-700">‹</button>
+                                <div class="px-4 text-center">
+                                    <div class="text-sm text-gray-500">Mes / Año</div>
+                                    <div class="text-base font-medium">{{ nombreMes(mesActivo) }} {{ anioActivo }}</div>
+                                </div>
+                                <button @click="nextMonth"
+                                    class="px-3 py-1 rounded bg-gray-100 dark:bg-gray-700">›</button>
+                            </div>
+
+                            <!-- Acciones -->
+                            <div class="flex items-center gap-2">
+                                <button v-if="authUser && (authUser.role === 'admin')" @click="agregarAM"
+                                    class="px-4 py-2 bg-green-500 text-white rounded-lg shadow hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-400 transition-colors duration-200">
+                                    Agregar
+                                </button>
+
+                                <button v-if="authUser && (authUser.role === 'admin')" @click="agregarEASY"
+                                    class="px-4 py-2 bg-green-500 text-white rounded-lg shadow hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-400 transition-colors duration-200">
+                                    Agregar Easy
+                                </button>
+
+                                <button @click="exportarExcel(mesActivo, anioActivo)"
+                                    class="px-3 py-1.5 rounded bg-yellow-600 text-white">Exportar a Excel
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Línea informativa -->
+                    <div class="text-sm text-gray-500 mb-2">
+                        Mostrando: <strong>{{ tablaVisibleLabel }}</strong> — {{nombreMes(mesActivo)}} {{ anioActivo}}
+                    </div>
+
+                    <!-- Tablas -->
+                    <div>
+                        <!-- ================= CAJA ================= -->
+                        <div v-if="tablaVisible === 'caja'">
+                            <table class="min-w-full text-sm text-left border dark:border-gray-700">
+                                <thead
+                                    class="sticky top-0 z-10 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-100">
+                                    <tr>
+                                        <th></th>
+                                        <th class="p-3">N° Acta</th>
+                                        <th class="p-3">Fecha</th>
+                                        <th class="p-3">Descripción</th>
+                                        <th class="p-3">Presupuestario</th>
+                                        <th class="p-3">Actividad</th>
+                                        <th class="p-3">Ingresos</th>
+                                        <th class="p-3">Egresos</th>
+                                        <th class="p-3">Saldo</th>
+                                        <th v-if="authUser && (authUser.role === 'admin' || authUser.role === 'equipo')"
+                                            class="p-3">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- SALDO APERTURA (mes anterior) - siempre al inicio -->
+                                    <tr class="bg-gray-50 dark:bg-gray-800 text-sm dark:text-white">
+                                        <td class="p-3" colspan="5">
+                                            Saldo apertura — {{ nombreMes(mesActivo === 1 ? 12 : mesActivo - 1) }}
+                                            {{ mesActivo === 1 ? (anioActivo - 1) : anioActivo }}
+                                        </td>
+                                        <td class="p-3"></td>
+                                        <td class="p-3"></td>
+                                        <td class="p-3 font-semibold">{{ formatNumber(aperturaCaja) }}</td>
+                                        <td v-if="authUser && (authUser.role === 'admin' || authUser.role === 'equipo')"
+                                            class="p-3"></td>
+                                    </tr>
+
+                                    <!-- FILAS DE ACTAS (sí muestran saldo) -->
+                                    <tr v-for="acta in actasCajaFiltradas" :key="acta.id"
+                                        class="border-t dark:text-white dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700 transition">
+                                        <td class="p-3">
+                                            <div @click="verVinculacion(acta)" title="Ver vinculación"
+                                                class="w-4 h-4 rounded-full cursor-pointer"
+                                                :class="isVinculado(acta) ? 'bg-green-500' : ''">
+                                            </div>
+                                        </td>
+                                        <td class="p-3">{{ acta.n_acta }}</td>
+                                        <td class="p-3">{{ acta.fecha }}</td>
+                                        <td class="p-3">{{ acta.descripcion }}</td>
+                                        <td class="p-3">{{ acta.presupuestario }}</td>
+                                        <td class="p-3">{{ acta.actividad }}</td>
+                                        <td class="p-3 text-green-600 font-semibold">{{ formatNumber(acta.ingresos) }}
+                                        </td>
+                                        <td class="p-3 text-red-600 font-semibold">{{ formatNumber(acta.egresos) }}</td>
+                                        <td class="p-3 font-bold">{{ formatNumber(acta.saldo) }}</td>
+
+                                        <!-- dentro de la celda de acciones de CAJA -->
+                                        <td v-if="authUser && (authUser.role === 'admin' || authUser.role === 'equipo')"
+                                            class="p-3 flex gap-2 items-center">
+                                            <a :href="`/proyectos/${proyecto.id}/amcaja/${acta.id}/edit`"
+                                                class="flex items-center justify-center w-9 h-9 bg-blue-500 text-white rounded-lg">✏️</a>
+
+                                            <button @click="eliminarCaja(acta.id)" title="Eliminar"
+                                                class="flex items-center justify-center w-9 h-9 bg-red-500 text-white rounded-lg">🗑️
+                                            </button>
+
+
+                                            <button @click="abrirCrearEasyConActa(acta)"
+                                                title="Abrir Crear EASY (pre-llenado)"
+                                                class="flex items-center justify-center w-9 h-9 bg-indigo-600 text-white rounded-lg">
+                                                ➡️
+                                            </button>
+                                        </td>
+
+                                    </tr>
+
+                                    <tr v-if="!actasCajaFiltradas || actasCajaFiltradas.length === 0">
+                                        <td class="p-3 text-gray-500 italic" colspan="9">No hay registros en Caja.</td>
+                                    </tr>
+
+                                    <!-- ÚLTIMO SALDO REGISTRADO (solo uno) -->
+                                    <tr class="bg-gray-50 dark:bg-gray-800 text-sm dark:text-white">
+                                        <td class="p-3" colspan="5">Último saldo registrado</td>
+                                        <td class="p-3"></td>
+                                        <td class="p-3"></td>
+                                        <td class="p-3 font-semibold">{{ formatNumber(ultimoSaldo) }}</td>
+                                        <td v-if="authUser && (authUser.role === 'admin' || authUser.role === 'equipo')"
+                                            class="p-3"></td>
+                                    </tr>
+
+                                    <!-- TOTALES DEL MES -->
+                                    <tr class="border-t bg-gray-50 dark:bg-gray-800 font-semibold dark:text-white">
+                                        <td class="p-3" colspan="5">Totales del mes — Movimientos</td>
+                                        <td class="p-3 text-green-700">{{ formatNumber(ingresosCajaTotal) }}</td>
+                                        <td class="p-3 text-red-600">{{ formatNumber(egresosCajaTotal) }}</td>
+                                        <td class="p-3">{{ formatNumber(movimientosCaja) }}</td>
+                                        <td v-if="authUser && (authUser.role === 'admin' || authUser.role === 'equipo')"
+                                            class="p-3"></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            <!-- Modal Vinculaciones (mostrar datos de inventario) -->
+                            <div v-if="modalVinculacionVisible"
+                                class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                                <div class="bg-white dark:bg-gray-800 rounded-lg p-6 w-11/12 md:w-2/3 shadow-lg">
+                                    <div class="flex items-start justify-between mb-4">
+                                        <h2 class="text-lg font-bold text-gray-800 dark:text-white">Vinculaciones del
+                                            Acta
+                                        </h2>
+                                        <div class="flex items-center gap-2">
+                                            <button @click="() => { modalVinculacionVisible = false }"
+                                                class="px-3 py-1 rounded-md bg-gray-500 text-white hover:bg-gray-600 transition"
+                                                title="Cerrar">Cerrar</button>
+                                        </div>
+                                    </div>
+
+                                    <div class="mb-4 text-sm text-gray-700 dark:text-gray-200">
+                                        <div><strong>N° Acta:</strong> {{ currentActa?.n_acta ?? currentActa?.id ?? '—'}}
+                                        </div>
+                                        <div><strong>Fecha:</strong> {{ formatFecha(currentActa?.fecha) }}</div>
+                                        <div><strong>Descripción:</strong> {{ currentActa?.descripcion ?? '—' }}</div>
+                                    </div>
+
+                                    <div class="overflow-x-auto max-h-[60vh]">
+                                        <table class="min-w-full text-sm border dark:text-white">
+                                            <thead class="bg-gray-200 dark:bg-gray-700 sticky top-0">
+                                                <tr>
+                                                    <th class="p-2 text-left">Inventario</th>
+                                                    <th class="p-2 text-left">Código / Fila</th>
+                                                    <th class="p-2 text-left">Cantidad</th>
+                                                    <th class="p-2 text-left">Detalles</th>
+                                                </tr>
+                                            </thead>
+
+                                            <tbody>
+                                                <tr v-if="!vinculacionesActuales || vinculacionesActuales.length === 0">
+                                                    <td colspan="5"
+                                                        class="text-center py-4 text-gray-500 dark:text-gray-400">
+                                                        No hay vinculaciones para este acta.
+                                                    </td>
+                                                </tr>
+
+                                                <tr v-for="(v, i) in vinculacionesActuales" :key="i"
+                                                    class="border-t dark:border-gray-700">
+                                                    <!-- Nombre / categoría -->
+                                                    <td class="p-2">
+                                                        <div v-if="v.inventario">
+                                                            <div class="font-semibold">{{ v.inventario.descripcion ?? v.inventario.codigo ?? '—' }}</div>
+                                                            <div class="text-xs text-gray-500">{{ v.inventario.categoria ?? '—'}}
+                                                            </div>
+                                                        </div>
+                                                        <div v-else>
+                                                            {{ v.descripcion ?? '—' }}
+                                                        </div>
+                                                    </td>
+
+                                                    <!-- Código / fila -->
+                                                    <td class="p-2">
+                                                        <div v-if="v.inventario">
+                                                            {{ v.inventario.codigo ?? v.inventario.id ?? '—' }}
+                                                        </div>
+                                                        <div v-else>
+                                                            {{ v.inventario_row_id ?? '—' }}
+                                                        </div>
+                                                    </td>
+
+                                                    <!-- Cantidad / entradas / stock -->
+                                                    <td class="p-2">
+                                                        <div v-if="v.inventario">
+                                                            {{ v.inventario.entradas ?? v.inventario.stock ?? v.cantidad ?? '—'}}
+                                                        </div>
+                                                        <div v-else>
+                                                            {{ v.cantidad ?? '—' }}
+                                                        </div>
+                                                    </td>
+
+                                                    <!-- Detalles: precio, fecha, stock -->
+                                                    <td class="p-2">
+                                                        <div v-if="v.inventario">
+                                                            <div>Precio: <strong>{{ typeof v.inventario.precio !== 'undefined' ? formatNumber(v.inventario.precio) : '—' }}</strong>
+                                                            </div>
+                                                            <div class="text-xs text-gray-500">Fecha: {{v.inventario.fecha ? formatFecha(v.inventario.fecha) : '—' }}</div>
+                                                            <div class="text-xs text-gray-500">Stock: {{v.inventario.stock ?? '—'}}</div>
+                                                        </div>
+                                                        <div v-else>
+                                                            <div class="text-xs">{{ v.meta ? (typeof v.meta === 'object' ? JSON.stringify(v.meta) : v.meta) : '' }}</div>
+                                                        </div>
+                                                    </td>
+
+
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+
+                                    <div class="mt-4 text-right text-sm text-gray-600 dark:text-gray-400">
+                                        <span><strong>Total vinculaciones:</strong> {{ vinculacionesActuales?.length ?? 0}}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+
+                        </div>
+
+                        <!-- ================= BANCO ================= -->
+                        <div v-if="tablaVisible === 'banco'">
+                            <table class="min-w-full text-sm text-left border dark:border-gray-700">
+                                <thead
+                                    class="sticky top-0 z-10 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-100">
+                                    <tr>
+                                        <th></th>
+                                        <th class="p-3">N° Acta</th>
+                                        <th class="p-3">Fecha</th>
+                                        <th class="p-3">Descripción</th>
+                                        <th class="p-3">Presupuestario</th>
+                                        <th class="p-3">Actividad</th>
+                                        <th class="p-3">Ingresos</th>
+                                        <th class="p-3">Egresos</th>
+                                        <th class="p-3">Saldo</th>
+                                        <th class="p-3">Acciones</th>
+                                        <th class="p-3">funsiones</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- SALDO APERTURA BANCO (siempre al inicio) -->
+                                    <tr class="bg-gray-50 dark:bg-gray-800 text-sm dark:text-white">
+                                        <td class="p-3" colspan="5">
+                                            Saldo apertura — {{ nombreMes(mesActivo === 1 ? 12 : mesActivo - 1) }}
+                                            {{ mesActivo === 1 ? (anioActivo - 1) : anioActivo }}
+                                        </td>
+                                        <td class="p-3"></td>
+                                        <td class="p-3"></td>
+                                        <td class="p-3 font-semibold">{{ formatNumber(aperturaBanco) }}</td>
+                                        <td class="p-3"></td>
+                                        <td class="p-3"></td>
+                                    </tr>
+
+                                    <!-- FILAS DE ACTAS (muestran su propio saldo) -->
+                                    <tr v-for="acta in actasBancoFiltradas" :key="acta.id"
+                                        class="border-t dark:text-white dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700 transition">
+                                        <td class="p-3">
+                                            <div @click="verVinculacion(acta, 'banco')" title="Ver vinculación"
+                                                class="w-4 h-4 rounded-full cursor-pointer"
+                                                :class="isVinculado(acta, 'banco') ? 'bg-green-500' : ''">
+                                            </div>
+                                        </td>
+
+
+
+                                        <td class="p-3">{{ acta.n_acta }}</td>
+                                        <td class="p-3">{{ acta.fecha }}</td>
+                                        <td class="p-3">{{ acta.descripcion }}</td>
+                                        <td class="p-3">{{ acta.presupuestario }}</td>
+                                        <td class="p-3">{{ acta.actividad }}</td>
+                                        <td class="p-3 text-green-600 font-semibold">{{ formatNumber(acta.ingresos) }}
+                                        </td>
+                                        <td class="p-3 text-red-600 font-semibold">{{ formatNumber(acta.egresos) }}</td>
+                                        <td class="p-3 font-bold">{{ formatNumber(acta.saldo) }}</td>
+                                        <td class="p-3">{{ acta.accion }}</td>
+                                        <td class="p-3 flex gap-2 items-center">
+                                            <a :href="`/proyectos/${proyecto.id}/ambanco/${acta.id}/edit`"
+                                                class="flex items-center justify-center w-9 h-9 bg-blue-500 text-white rounded-lg">✏️</a>
+                                            <button @click="eliminarBanco(acta.id)" title="Eliminar"
+                                                class="flex items-center justify-center w-9 h-9 bg-red-500 text-white rounded-lg">🗑️
+                                            </button>
+
+                                            <!-- BOTÓN NUEVO: enviar a EASY -->
+                                            <button @click="enviarActaAEasy(acta, 'banco')" title="Enviar a Easy"
+                                                class="flex items-center justify-center w-9 h-9 bg-indigo-600 text-white rounded-lg">➡️</button>
+                                        </td>
+
+
+                                    </tr>
+
+                                    <tr v-if="!actasBancoFiltradas || actasBancoFiltradas.length === 0">
+                                        <td class="p-3 text-gray-500 italic" colspan="10">No hay registros en Banco.
+                                        </td>
+                                    </tr>
+
+                                    <!-- ÚLTIMO SALDO REGISTRADO (solo uno) -->
+                                    <tr class="bg-gray-50 dark:bg-gray-800 text-sm dark:text-white">
+                                        <td class="p-3" colspan="5">Último saldo registrado</td>
+                                        <td class="p-3"></td>
+                                        <td class="p-3"></td>
+                                        <td class="p-3 font-semibold">{{ formatNumber(ultimoSaldoBanco) }}</td>
+                                        <td class="p-3"></td>
+                                        <td class="p-3"></td>
+                                    </tr>
+
+                                    <!-- TOTALES BANCO (final) -->
+                                    <tr class="border-t bg-gray-50 dark:bg-gray-800 font-semibold dark:text-white">
+                                        <td class="p-3" colspan="5">Totales del mes — Movimientos</td>
+                                        <td class="p-3 text-green-700">{{ formatNumber(ingresosBancoTotal) }}</td>
+                                        <td class="p-3 text-red-600">{{ formatNumber(egresosBancoTotal) }}</td>
+                                        <td class="p-3">{{ formatNumber(movimientosBanco) }}</td>
+                                        <td class="p-3"></td>
+                                        <td class="p-3"></td>
+                                    </tr>
+                                </tbody>
+
+                            </table>
+                            <div v-if="modalVinculacionVisible"
+                                class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                                <div class="bg-white dark:bg-gray-800 rounded-lg p-6 w-11/12 md:w-2/3 shadow-lg">
+                                    <div class="flex items-start justify-between mb-4">
+                                        <h2 class="text-lg font-bold text-gray-800 dark:text-white">Vinculaciones del
+                                            Acta
+                                        </h2>
+                                        <div class="flex items-center gap-2">
+                                            <button @click="() => { modalVinculacionVisible = false }"
+                                                class="px-3 py-1 rounded-md bg-gray-500 text-white hover:bg-gray-600 transition"
+                                                title="Cerrar">Cerrar</button>
+                                        </div>
+                                    </div>
+
+                                    <div class="mb-4 text-sm text-gray-700 dark:text-gray-200">
+                                        <div><strong>N° Acta:</strong> {{ currentActa?.n_acta ?? currentActa?.id ?? '—'}}
+                                        </div>
+                                        <div><strong>Fecha:</strong> {{ formatFecha(currentActa?.fecha) }}</div>
+                                        <div><strong>Descripción:</strong> {{ currentActa?.descripcion ?? '—' }}</div>
+                                    </div>
+
+                                    <div class="overflow-x-auto max-h-[60vh]">
+                                        <table class="min-w-full text-sm border dark:text-white">
+                                            <thead class="bg-gray-200 dark:bg-gray-700 sticky top-0">
+                                                <tr>
+                                                    <th class="p-2 text-left">Inventario</th>
+                                                    <th class="p-2 text-left">Código / Fila</th>
+                                                    <th class="p-2 text-left">Cantidad</th>
+                                                    <th class="p-2 text-left">Detalles</th>
+                                                </tr>
+                                            </thead>
+
+                                            <tbody>
+                                                <tr v-if="!vinculacionesActuales || vinculacionesActuales.length === 0">
+                                                    <td colspan="5"
+                                                        class="text-center py-4 text-gray-500 dark:text-gray-400">
+                                                        No hay vinculaciones para este acta.
+                                                    </td>
+                                                </tr>
+
+                                                <tr v-for="(v, i) in vinculacionesActuales" :key="i"
+                                                    class="border-t dark:border-gray-700">
+                                                    <!-- Nombre / categoría -->
+                                                    <td class="p-2">
+                                                        <div v-if="v.inventario">
+                                                            <div class="font-semibold">{{ v.inventario.descripcion ?? v.inventario.codigo ?? '—' }}</div>
+                                                            <div class="text-xs text-gray-500">{{ v.inventario.categoria ?? '—'}}
+                                                            </div>
+                                                        </div>
+                                                        <div v-else>
+                                                            {{ v.descripcion ?? '—' }}
+                                                        </div>
+                                                    </td>
+
+                                                    <!-- Código / fila -->
+                                                    <td class="p-2">
+                                                        <div v-if="v.inventario">
+                                                            {{ v.inventario.codigo ?? v.inventario.id ?? '—' }}
+                                                        </div>
+                                                        <div v-else>
+                                                            {{ v.inventario_row_id ?? '—' }}
+                                                        </div>
+                                                    </td>
+
+                                                    <!-- Cantidad / entradas / stock -->
+                                                    <td class="p-2">
+                                                        <div v-if="v.inventario">
+                                                            {{ v.inventario.entradas ?? v.inventario.stock ?? v.cantidad ?? '—'}}
+                                                        </div>
+                                                        <div v-else>
+                                                            {{ v.cantidad ?? '—' }}
+                                                        </div>
+                                                    </td>
+
+                                                    <!-- Detalles: precio, fecha, stock -->
+                                                    <td class="p-2">
+                                                        <div v-if="v.inventario">
+                                                            <div>Precio: <strong>{{ typeof v.inventario.precio !== 'undefined' ? formatNumber(v.inventario.precio) : '—' }}</strong>
+                                                            </div>
+                                                            <div class="text-xs text-gray-500">Fecha:
+                                                                {{ v.inventario.fecha ? formatFecha(v.inventario.fecha) : '—' }}</div>
+                                                            <div class="text-xs text-gray-500">Stock:
+                                                                {{ v.inventario.stock ?? '—'}}</div>
+                                                        </div>
+                                                        <div v-else>
+                                                            <div class="text-xs">{{ v.meta ? (typeof v.meta === 'object' ? JSON.stringify(v.meta) : v.meta) : '' }}</div>
+                                                        </div>
+                                                    </td>
+
+
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+
+                                    <div class="mt-4 text-right text-sm text-gray-600 dark:text-gray-400">
+                                        <span><strong>Total vinculaciones:</strong> {{ vinculacionesActuales?.length ?? 0}}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- ================= EASY ================= -->
+                        <div v-if="tablaVisible === 'easy'">
+                            <div class="overflow-x-auto">
+                                <table class="w-full table-auto text-sm text-left border dark:border-gray-700">
+                                    <thead
+                                        class="sticky top-0 z-10 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-100">
+                                        <tr>
+                                            <!-- Columnas tipo Excel (ordenadas para lectura contable) -->
+                                            <th class="p-2">Codigo general</th>
+                                            <th class="p-2">Gasto (PEN)</th>
+                                            <th class="p-2">Receta (PEN)</th>
+                                            <th class="p-2">Moneda de facturación</th>
+                                            <th class="p-2">Débito (EUR)</th>
+                                            <th class="p-2">Crédito (EUR)</th>
+                                            <th class="p-2">Moneda de gestión</th>
+                                            <th class="p-2">Numeración y descripción</th>
+                                            <th class="p-2">código de presupuesto</th>
+                                            <th class="p-2">Naturaleza</th>
+                                            <th class="p-2">Contrato</th>
+                                            <th class="p-2">Donantes</th>
+                                            <th class="p-2">Fecha</th>
+                                            <th class="p-2">Acciones</th>
+                                        </tr>
+                                    </thead>
+
+                                    <tbody>
+                                        <!-- FILAS DE ITEMS -->
+                                        <tr v-for="(item, idx) in itemsEasyFiltrados" :key="item.id"
+                                            class="border-t dark:text-white dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700 transition">
+                                            <td class="p-2">{{ item.Cuenta_general }}</td>
+                                            <td class="p-2">{{ item.gasto_moneda_local }}</td>
+                                            <td class="p-2">{{ item.ingreso_moneda_local }}</td>
+                                            <td class="p-2">{{ item.moneda_facturacion }}</td>
+                                            <td class="p-2">{{ item.debito_moneda_gestion }}</td>
+                                            <td class="p-2">{{ item.credito_moneda_gestion }}</td>
+                                            <td class="p-2">{{ item.moneda_gestion }}</td>
+                                            <td class="p-2">{{ item.numero_descripcion_pieza }}</td>
+                                            <td class="p-2">{{ item.codigo_presupuestario }}</td>
+                                            <td class="p-2">{{ item.naturaleza_presupuesto }}</td>
+                                            <td class="p-2">{{ item.contrato }}</td>
+                                            <td class="p-2">{{ item.bailleur_fondos }}</td>
+                                            <td class="p-2">{{ item.fecha }}</td>
+                                            <td class="p-3 flex gap-2 items-center">
+                                                <!-- simple: solo proyecto.id y item.id -->
+                                                <a :href="`/proyectos/${proyecto.id}/easy/${item.id}/edit`"
+                                                    class="flex items-center justify-center w-9 h-9 bg-blue-500 text-white rounded-lg">✏️</a>
+
+                                                <button @click="eliminarActa(item.id)"
+                                                    class="flex items-center justify-center w-9 h-9 bg-red-500 text-white rounded-lg">🗑️</button>
+                                            </td>
+                                        </tr>
+
+                                        <!-- SIN REGISTROS -->
+                                        <tr v-if="!itemsEasyFiltrados || itemsEasyFiltrados.length === 0">
+                                            <td class="p-2 italic text-gray-500" colspan="14">No hay registros Easy.
+                                            </td>
+                                        </tr>
+
+                                        <!-- TOTALES EASY -->
+                                        <tr class="border-t bg-gray-50 dark:bg-gray-800 font-semibold dark:text-white">
+                                            <td class="p-2" colspan="2">Totales del mes — Movimientos</td>
+                                            <td class="p-2 text-black-700 dark:text-white">Total (Moneda local): {{formatNumber(egresosEasyTotal) }}</td>
+                                            <td></td>
+                                            <td class="p-2 text-black-700 dark:text-white">Total (Moneda gestión): {{formatNumber(egresosgestiónEasyTotal) }}</td>
+                                            <td colspan="9"></td>
+                                        </tr>
+                                    </tbody>
+
+                                </table>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

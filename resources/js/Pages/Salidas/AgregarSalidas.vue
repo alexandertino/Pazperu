@@ -12,7 +12,7 @@ const user = usePage().props.auth?.user || null;
 const form = reactive({
   codigo1: '',
   codigo2: String(new Date().getFullYear()),
-  persona_id: null,   // NO asignamos por defecto: si es nueva persona, el backend la creará
+  persona_id: null,
   nombre: '',
   lugar: '',
   distrito: '',
@@ -316,6 +316,9 @@ function actaPdf_escapeHtml(unsafe) {
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#039;');
 }
+const html = actaPdf2_generateActaHTML({
+  logoData: '/images/logo.png'  
+});
 
 function actaPdf2_generateActaHTML({ nActa, nombre, lugar, distrito, fecha, items, proyectoNombre, logoData = null }) {
   const rows = (items || []).map((it) => {
@@ -335,7 +338,7 @@ function actaPdf2_generateActaHTML({ nActa, nombre, lugar, distrito, fecha, item
     .paper{width:210mm;min-height:297mm;background:#fff;padding:18mm;box-shadow:0 6px 18px rgba(0,0,0,0.08);border-radius:4px;border:1px solid #e2e6ef;box-sizing:border-box;color:#222}
     header{display:flex;justify-content:space-between;margin-bottom:6px;align-items:flex-start}
     .left-meta{display:flex;align-items:flex-start;gap:12px}
-    .logo{width:60px;height:60px;border-radius:6px;background:#1e4ea8;flex-shrink:0;overflow:hidden}
+    .logo {width: 60px;height: 60px;border-radius: 6px;flex-shrink: 0;overflow: hidden;}
     .org-data{font-size:12px;color:#333}
     .org-title{font-weight:bold;font-size:14px;margin-bottom:4px}
     .right-meta{text-align:right;color:#555;font-size:12px}
@@ -403,7 +406,9 @@ function actaPdf2_generateActaHTML({ nActa, nombre, lugar, distrito, fecha, item
     <div class="paper">
       <header>
         <div class="left-meta">
-          <div class="logo">${logoData ? `<img src="${actaPdf_escapeHtml(logoData)}" alt="logo">` : ''}</div>
+          <div class="logo">
+            <img src="/images/logo.png" alt="logo">
+          </div>
           <div class="org-data">
             <div class="org-title">Islas de Paz Perú</div>
             <div style="font-size:12px;color:#444">RUC: <strong>20600630769</strong></div>
@@ -518,111 +523,105 @@ function actaPdf2_downloadHtmlFile() {
 }
 
 async function actaPdf2_downloadPdfFile() {
-  // Validaciones previas (igual que antes)
-  if (!form.nombre || !form.lugar || !form.distrito) {
-    Swal.fire('Falta información', 'Completa nombre, lugar y distrito.', 'warning');
-    return;
-  }
-  if (!draft.value.length) {
-    Swal.fire('Borrador vacío', 'Agrega items antes de generar el acta.', 'warning');
-    return;
-  }
+  // validaciones (igual que antes)
+  if (!form.nombre || !form.lugar || !form.distrito) { Swal.fire('Falta información', 'Completa nombre, lugar y distrito.', 'warning'); return; }
+  if (!draft.value.length) { Swal.fire('Borrador vacío', 'Agrega items antes de generar el acta.', 'warning'); return; }
 
   const nActaValue = codigoGenerado.value || 'acta';
   const html = actaPdf2_generateActaHTML({
     nActa: nActaValue,
-    nombre: form.nombre,
-    lugar: form.lugar,
-    distrito: form.distrito,
-    fecha: form.fecha,
-    items: draft.value,
-    proyectoNombre: props.proyecto?.nombre || ''
+    nombre: form.nombre, lugar: form.lugar, distrito: form.distrito,
+    fecha: form.fecha, items: draft.value, proyectoNombre: props.proyecto?.nombre || ''
   });
 
-  // Crea un contenedor oculto para renderizar el HTML
+  // convertir mm->px a 96dpi
+  const mmToPx = (mm, dpi = 96) => Math.round(mm * (dpi / 25.4));
+  const a4WidthPx = mmToPx(210, 96); // ~794px
   const container = document.createElement('div');
   container.style.position = 'fixed';
   container.style.left = '-10000px';
   container.style.top = '0';
-  container.style.width = '210mm'; // ancho A4 para mejor ajuste
+  container.style.width = `${a4WidthPx}px`;
   container.style.boxSizing = 'border-box';
   container.innerHTML = html;
   document.body.appendChild(container);
 
-  // Elemento que queremos convertir (la clase .paper dentro del HTML)
   const elementToPdf = container.querySelector('.paper') || container;
+  elementToPdf.style.margin = '0 auto';
+  elementToPdf.style.boxSizing = 'border-box';
+  elementToPdf.style.width = `${a4WidthPx}px`;
 
-  // Función para cargar html2pdf si no está presente
-  const loadHtml2Pdf = () => new Promise((resolve, reject) => {
-    if (window.html2pdf) return resolve();
-    const script = document.createElement('script');
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.9.3/html2pdf.bundle.min.js';
-    script.onload = () => {
-      // un pequeño delay para asegurar que todo esté inicializado
-      setTimeout(() => {
-        if (window.html2pdf) resolve();
-        else reject(new Error('html2pdf no inicializó'));
-      }, 100);
-    };
-    script.onerror = () => reject(new Error('No se pudo cargar html2pdf desde CDN'));
-    document.head.appendChild(script);
-    // timeout por si algo va mal
-    setTimeout(() => {
-      if (!window.html2pdf) reject(new Error('Timeout cargando html2pdf'));
-    }, 10000);
-  });
+  // esperar recursos (img + fonts)
+  await (async function waitResources(root, timeout = 10000) {
+    const imgs = Array.from(root.querySelectorAll('img'));
+    const imgPromises = imgs.map(img => new Promise(res => {
+      if (!img.src) return res();
+      if (img.complete && img.naturalWidth !== 0) return res();
+      const done = () => { img.removeEventListener('load', done); img.removeEventListener('error', done); res(); };
+      img.addEventListener('load', done); img.addEventListener('error', done);
+      setTimeout(done, 5000);
+    }));
+    const fontPromise = (document.fonts && document.fonts.ready) ? document.fonts.ready : Promise.resolve();
+    await Promise.race([Promise.all([...imgPromises, fontPromise]), new Promise(r => setTimeout(r, timeout))]);
+    await new Promise(r => setTimeout(r, 120)); // espera extra
+  })(container);
+
+  // cargar html2pdf
+  await (async function loadHtml2Pdf() {
+    if (window.html2pdf) return;
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.9.3/html2pdf.bundle.min.js';
+      s.onload = () => setTimeout(() => window.html2pdf ? resolve() : reject(new Error('html2pdf no inicializó')), 150);
+      s.onerror = () => reject(new Error('No se pudo cargar html2pdf'));
+      document.head.appendChild(s);
+      setTimeout(() => { if (!window.html2pdf) reject(new Error('Timeout cargando html2pdf')); }, 10000);
+    });
+  })();
 
   try {
-    await loadHtml2Pdf();
-
+    // escala alta para más nitidez. Si falla por memoria reduce a 2.
+    const scale = 3; // <- subir para mayor nitidez (2-3). OJO memoria.
     const opt = {
-      margin: 10, // mm
+      margin: 8,
       filename: `${String(nActaValue).replace(/[\\\/:*?"<>|]/g, '_')}.pdf`,
       image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true, logging: false },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      html2canvas: {
+        scale,
+        useCORS: true,
+        allowTaint: false,
+        logging: false,
+        width: a4WidthPx,
+        windowWidth: a4WidthPx,
+        // algunas versiones aceptan 'dpi'
+        dpi: 300
+      },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      pagebreak: { mode: ['css', 'legacy'] }
     };
 
-    // html2pdf no siempre devuelve una Promise en todas las versiones, por eso usamos un wrapper
+    // Render "toPdf" y luego "save" (más control)
     await new Promise((resolve, reject) => {
       try {
-        window.html2pdf()
-          .set(opt)
-          .from(elementToPdf)
-          .save(() => {
-            resolve();
-          });
+        window.html2pdf().set(opt).from(elementToPdf).toPdf().get('pdf').then(() => {
+          window.html2pdf().set(opt).from(elementToPdf).save(() => resolve());
+        }).catch(err => reject(err));
       } catch (err) {
         reject(err);
       }
     });
 
   } catch (err) {
-    console.error('Error generando PDF:', err);
-    Swal.fire(
-      'Error',
-      'No se pudo generar el PDF automáticamente. Se abrirá la vista para imprimir como alternativa.',
-      'error'
-    );
-
-    // Fallback: abrir vista imprimible (igual que tu función onGenerateActaImmediate)
+    console.error('Error generando PDF cliente:', err);
+    Swal.fire('Error', 'No se pudo generar el PDF en el navegador. Intentando abrir vista imprimible...', 'error');
+    // fallback: abrir html en nueva ventana (vectorial si el usuario imprime)
     try {
       const w = window.open('', '_blank', 'noopener,noreferrer');
-      if (w) {
-        w.document.open();
-        w.document.write(html);
-        w.document.close();
-        w.focus();
-        setTimeout(() => { try { w.print(); } catch (e) { /* ignore */ } }, 300);
-      } else {
-        Swal.fire('Error', 'Permite popups e inténtalo nuevamente.', 'error');
-      }
-    } catch (e) {
-      console.error(e);
-    }
+      if (w) { w.document.open(); w.document.write(html); w.document.close(); w.focus(); setTimeout(() => { try { w.print(); } catch (e) { } }, 300); }
+      else Swal.fire('Error', 'Permite popups e inténtalo nuevamente.', 'error');
+    } catch (e) { console.error(e); }
   } finally {
-    // Limpieza DOM
-    try { document.body.removeChild(container); } catch (e) { /* ignore */ }
+    try { document.body.removeChild(container); } catch (e) { }
   }
 }
 
@@ -810,10 +809,6 @@ const scheduleHideSugerencias = () => {
               <div class="flex gap-2 items-center">
                 <input type="number" min="0.0001" step="0.0001" v-model.number="form.cantidad"
                   class="w-full p-2 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-700 focus:outline-none" />
-                <div
-                  class="px-3 py-2 border rounded bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-gray-100">
-                  {{ form.um || 'UN' }}
-                </div>
               </div>
             </div>
 
@@ -863,7 +858,7 @@ const scheduleHideSugerencias = () => {
                 <div>
                   <div class="font-medium text-gray-900 dark:text-gray-100">
                     {{ idx + 1 }}. {{ it.producto }} <span class="text-xs text-gray-500 dark:text-gray-400">({{ it.um
-                    }})</span>
+                      }})</span>
                   </div>
                   <div class="text-sm text-gray-500 dark:text-gray-400">
                     Código: {{ it.producto_code }} — Cant: <strong>{{ it.cantidad }}</strong>
@@ -899,7 +894,7 @@ const scheduleHideSugerencias = () => {
               </div>
 
               <div class="mt-2">
-                <button @click="actaPdf2_downloadHtmlFile()"
+                <button @click="actaPdf2_downloadPdfFile"
                   class="w-full bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-purple-300">
                   Generar Acta (Plantilla)
                 </button>
@@ -950,7 +945,7 @@ const scheduleHideSugerencias = () => {
                     item.code }}</div>
                   <div class="text-xs text-gray-500 dark:text-gray-400">
                     Código: {{ item.code || item.id }} • UM: {{ item.um || '—' }} • Stock: <strong>{{ item.stock ?? '—'
-                    }}</strong>
+                      }}</strong>
                   </div>
                 </div>
 

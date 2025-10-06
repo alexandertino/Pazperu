@@ -14,6 +14,8 @@ use App\Http\Controllers\SalidaDebugController;
 use App\Http\Controllers\AmMovimientoController;
 use App\Http\Controllers\ProyectoEasyController;
 use App\Http\Controllers\ProyectoContabilidadExportController;
+use App\Http\Controllers\VinculacionController;
+use App\Http\Controllers\InventarioMetaController;
 use App\Http\Controllers\ExchangeRateController;
 use App\Http\Controllers\CategoriaController;
 use App\Http\Controllers\UnidadMedidaController;
@@ -197,6 +199,53 @@ Route::middleware('auth')->group(function () {
 
     Route::put('proyectos/{proyecto}/am/{id}', [AmMovimientoController::class, 'update'])
         ->name('proyectos.am.update');
+
+    Route::post('proyectos/{proyecto}/easy/store', [ProyectoEasyController::class, 'store'])
+        ->name('proyectos.easy.store');
+
+    // routes/web.php
+    Route::middleware(['auth'])->group(function () {
+        // Endpoint JSON para obtener logs por modelo + id (solo admin en controlador)
+        Route::get('/activity-logs/model/{model}/{id}', [\App\Http\Controllers\ActivityLogController::class, 'forModel'])
+            ->name('activity_logs.forModel');
+    });
+
+    Route::get('/proyectos/{proyecto}/inventario/meta', [InventarioController::class, 'meta']);
+
+    Route::get('/proyectos/{proyecto}/am/datos', [AmMovimientoController::class, 'datos'])
+        ->name('api.proyectos.am.datos');
+
+    Route::get('/proyectos/{proyecto}/am/meta', [AmMovimientoController::class, 'meta'])
+        ->name('api.proyectos.am.meta');
+
+
+    // batch: devuelve vinculaciones para varios am_row_id
+    Route::get('/proyectos/{proyecto}/vinculaciones/batch', [VinculacionController::class, 'batch'])
+        ->name('proyectos.vinculaciones.batch');
+
+    // one: devuelve vinculaciones para un solo am_row_id
+    Route::get('/proyectos/{proyecto}/vinculaciones/one', [VinculacionController::class, 'one'])
+        ->name('proyectos.vinculaciones.one');
+
+    Route::middleware(['auth'])->group(function () {
+        // Vista de gestión (Inertia) - global
+        Route::get('/inventario/meta/manage', [InventarioMetaController::class, 'manage'])
+            ->name('inventario.meta.manage');
+
+        // Endpoints API globales para CRUD
+        Route::get('/inventario/meta', [InventarioMetaController::class, 'index']);
+        Route::post('/inventario/meta', [InventarioMetaController::class, 'store']);
+        Route::put('/inventario/meta/{type}/{id}', [InventarioMetaController::class, 'update']);
+        Route::delete('/inventario/meta/{type}/{id}', [InventarioMetaController::class, 'destroy']);
+    });
+
+    // API (recomendado)
+    Route::post('/inventario/meta/insert-initial', [InventarioMetaController::class, 'insertInitialData']);
+
+    Route::get(
+        '/proyectos/{proyecto}/exportar-contabilidad-multiples',
+        [ProyectoContabilidadExportController::class, 'exportarMesMultiples']
+    )->name('proyectos.exportar.contabilidad_multiples');
 
     // opcional: alias si el frontend ya usa "/guardar"
     Route::post('/proyectos/{proyecto}/am/guardar', [AmMovimientoController::class, 'store']);

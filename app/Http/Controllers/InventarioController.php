@@ -3,6 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Models\Proyecto;
+use App\Models\Categoria; 
+use App\Models\UnidadMedida;         
+use App\Models\Solicitante;
+use App\Models\InventarioVinculado;
 use App\Models\ActivityLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -30,16 +34,24 @@ class InventarioController extends Controller
         ]);
     }
 
-    public function create($proyectoId)
-    {
-        $proyecto = Proyecto::findOrFail($proyectoId);
+   public function create($proyectoId)
+{
+    $proyecto = Proyecto::findOrFail($proyectoId);
 
-        return Inertia::render('Inventarios/AgregarInventarios', [
-            'proyecto' => $proyecto
-        ]);
-    }
-    
-    public function store(Request $request, $proyectoId){
+    $categorias = Categoria::select('id','nombre')->orderBy('nombre')->get();
+    $UnidadMedidas = UnidadMedida::select('id','nombre')->orderBy('nombre')->get();
+    $solicitantes = Solicitante::select('id','nombre')->orderBy('nombre')->get();
+
+    return Inertia::render('Inventarios/AgregarInventarios', [
+        'proyecto' => $proyecto,
+        'categorias' => $categorias,
+        'UnidadMedida' => $UnidadMedidas,
+        'solicitantes' => $solicitantes,
+    ]);
+}
+
+    public function store(Request $request, $proyectoId)
+    {
         $request->validate([
             'codigo' => 'required|string|max:255',
             'fecha' => 'required|date',
@@ -53,43 +65,140 @@ class InventarioController extends Controller
         ]);
 
         $proyecto = Proyecto::findOrFail($proyectoId);
+
+        // name de la tabla inventario dinámica del proyecto (igual que tú)
         $tablaInventario = 'inventario_proyecto_' . Str::of($proyecto->nombre)->lower()->replace(' ', '_');
 
-        $id = DB::table($tablaInventario)->insertGetId([
-            'codigo' => $request->codigo,
-            'fecha' => $request->fecha,
-            'descripcion' => $request->descripcion,
-            'unidad_medida' => $request->unidad_medida,
-            'categoria' => $request->categoria,
-            'entradas' => $request->entradas,
-            'salidas' => 0,
-            'stock' => $request->entradas,
-            'precio' => $request->precio,
-            'solicitado_por' => $request->solicitado_por,
-            'comentario' => $request->comentario,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        // Tomar am_table y am_row_id desde query (puede venir por GET o como hidden input)
+        $amTable = $request->query('am_table', $request->input('am_table', null));
+        $amRowId = $request->query('am_row_id', $request->input('am_row_id', null));
 
-        ActivityLog::create([
-            'user_id' => Auth::id(),
-            'action' => 'create',
-            'model' => $tablaInventario,
-            'model_id' => $id,
-            'changes' => ['new' => $request->all()],
-        ]);
-
-        if ($request->expectsJson()) {
-            return response()->json([
-                'message' => 'Inventario agregado correctamente.',
-                'id' => $id,
-            ], 201);
+        // Opcional: validar que si vienen, amRowId sea integer
+        if ($amRowId !== null && !ctype_digit((string)$amRowId)) {
+            return back()->withErrors(['am_row_id' => 'am_row_id inválido'])->withInput();
         }
 
-        return redirect()
-            ->route('proyectos.inventarios', $proyectoId)
-            ->with('success', 'Inventario agregado correctamente.');
+        try {
+            DB::beginTransaction();
+
+            $id = DB::table($tablaInventario)->insertGetId([
+                'codigo' => $request->codigo,
+                'fecha' => $request->fecha,
+                'descripcion' => $request->descripcion,
+                'unidad_medida' => $request->unidad_medida,
+                'categoria' => $request->categoria,
+                'entradas' => $request->entradas,
+                'salidas' => 0,
+                'stock' => $request->entradas,
+                'precio' => $request->precio,
+                'solicitado_por' => $request->solicitado_por,
+                'comentario' => $request->comentario,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            ActivityLog::create([
+                'user_id' => Auth::id(),
+                'action' => 'create',
+                'model' => $tablaInventario,
+                'model_id' => $id,
+                'changes' => ['new' => $request->all()],
+            ]);
+
+            // Si no vienen datos AM, sólo commit y redirect normal
+            if (empty($amTable) || empty($amRowId)) {
+                DB::commit();
+
+                if ($request->expectsJson()) {
+                    return response()->json([
+                        'message' => 'Inventario agregado correctamente.',
+                        'id' => $id,
+                    ], 201);
+                }
+
+                return redirect()
+                    ->route('proyectos.inventarios', $proyectoId)
+                    ->with('success', 'Inventario agregado correctamente.');
+            }
+
+            // --- Seguridad: verificar que am_table pertenece a este proyecto ---
+            $expectedBase = \Illuminate\Support\Str::slug($proyecto->nombre, '_');
+            $expectedBase = preg_replace('/[^a-z0-9_]/', '', strtolower($expectedBase));
+            $expectedCaja  = 'am_caja_proyecto_' . $expectedBase;
+            $expectedBanco = 'am_banco_proyecto_' . $expectedBase;
+
+            if (! in_array($amTable, [$expectedCaja, $expectedBanco], true)) {
+                // no coincide: rollback y error
+                DB::rollBack();
+                return back()->withErrors(['am_table' => 'La tabla AM no corresponde al proyecto.'])->withInput();
+            }
+
+            // Buscar placeholder existente (status draft) que coincida
+            $inventarioVinculado = \App\Models\InventarioVinculado::where('proyecto_id', $proyectoId)
+                ->where('am_table', $amTable)
+                ->where('am_row_id', $amRowId)
+                ->where('status', 'draft')
+                ->first();
+
+            if ($inventarioVinculado) {
+                // Actualizar placeholder con referencia al inventario creado
+                $inventarioVinculado->update([
+                    'inventario_table' => $tablaInventario,
+                    'inventario_row_id' => $id,
+                    'cantidad' => $request->entradas,               // opcional
+                    'descripcion' => $inventarioVinculado->descripcion ?? $request->descripcion,
+                    'fecha' => $inventarioVinculado->fecha ?? $request->fecha,
+                    'status' => 'linked', // puedes usar 'done' o 'linked' según tu flujo
+                    'updated_by' => Auth::id(),
+                ]);
+            } else {
+                // Si no existe placeholder, crear uno nuevo y vincularlo
+                \App\Models\InventarioVinculado::create([
+                    'proyecto_id' => $proyectoId,
+                    'am_table'    => $amTable,
+                    'am_row_id'   => $amRowId,
+                    'inventario_table' => $tablaInventario,
+                    'inventario_row_id' => $id,
+                    'descripcion' => $request->descripcion,
+                    'fecha' => $request->fecha,
+                    'cantidad' => $request->entradas,
+                    'meta' => null,
+                    'status' => 'linked',
+                    'created_by' => Auth::id(),
+                ]);
+            }
+
+            DB::commit();
+
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'message' => 'Inventario agregado y vinculado correctamente.',
+                    'id' => $id,
+                    'am_table' => $amTable,
+                    'am_row_id' => $amRowId,
+                ], 201);
+            }
+
+            // Redirigir a la lista de inventarios del proyecto (o donde prefieras)
+            return redirect()
+                ->route('proyectos.inventarios', $proyectoId)
+                ->with('success', 'Inventario agregado y vinculado correctamente.');
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            \Illuminate\Support\Facades\Log::error('Error guardando inventario y vinculando AM: ' . $e->getMessage(), [
+                'proyecto' => $proyectoId,
+                'am_table' => $amTable,
+                'am_row_id' => $amRowId,
+            ]);
+
+            if ($request->expectsJson()) {
+                return response()->json(['message' => 'Error al guardar inventario.', 'error' => $e->getMessage()], 500);
+            }
+
+            return back()->withErrors(['error' => 'Error al guardar inventario: ' . $e->getMessage()])->withInput();
+        }
     }
+
 
 
     public function verificarCodigo($proyectoId, $codigo)
@@ -133,7 +242,7 @@ class InventarioController extends Controller
             'precio' => 'required|numeric|min:0',
             'solicitado_por' => 'nullable|string|max:255',
             'proyecto_lg' => 'nullable|string|max:255',
-            'comentario' => 'nullable|string', 
+            'comentario' => 'nullable|string',
         ]);
 
         $proyecto = Proyecto::findOrFail($proyectoId);
@@ -171,7 +280,6 @@ class InventarioController extends Controller
                 'new' => $newData,
             ],
         ]);
-
     }
 
 

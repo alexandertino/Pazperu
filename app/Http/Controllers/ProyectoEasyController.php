@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Str;
 use Carbon\Carbon;
 use App\Models\ActivityLog;
 
@@ -17,7 +18,7 @@ class ProyectoEasyController extends Controller
 {
     public function create(Request $request, Proyecto $proyecto)
     {
-        // normalización incoming (tuya)
+        // normalización incoming
         $incoming = $request->all();
 
         $prefill = [
@@ -35,17 +36,33 @@ class ProyectoEasyController extends Controller
             'fecha' => $incoming['fecha'] ?? null,
             'n_acta' => $incoming['n_acta'] ?? null,
             'actividad' => $incoming['actividad'] ?? null,
+
+            // <-- nuevas claves que aceptamos desde el botón
+            'numero_prefijo' => $incoming['numero_prefijo'] ?? $incoming['numeroPrefijo'] ?? null,
+            'pieza_text' => $incoming['pieza_text'] ?? $incoming['piezaText'] ?? $incoming['pieza'] ?? null,
         ];
 
+        // si actividad viene y contrato no, usar actividad como contrato
         if (!empty($prefill['actividad']) && empty($prefill['contrato'])) {
             $prefill['contrato'] = $prefill['actividad'];
         }
 
+        // NO copiar la descripción larga a numero_descripcion_pieza.
+        // Usar n_acta solo si parece un número corto; en otro caso dejar null para que frontend solicite next_numero.
         if (empty($prefill['numero_descripcion_pieza'])) {
-            $prefill['numero_descripcion_pieza'] = $prefill['descripcion'] ?? $prefill['n_acta'] ?? null;
+            if (!empty($prefill['n_acta']) && preg_match('/^\d+$/', (string)$prefill['n_acta'])) {
+                $prefill['numero_descripcion_pieza'] = (string)$prefill['n_acta'];
+            } else {
+                $prefill['numero_descripcion_pieza'] = null;
+            }
         }
 
-        // ===== Obtener preferencias desde easy_preferences si existen =====
+        // (Opcional) si quieres usar n_acta numérica como prefijo por defecto cuando no hay nada:
+        // if (empty($prefill['numero_descripcion_pieza']) && !empty($prefill['n_acta']) && preg_match('/^\d+$/', (string)$prefill['n_acta'])) {
+        //     $prefill['numero_descripcion_pieza'] = trim((string)$prefill['n_acta']) . '-';
+        // }
+
+        // ===== Obtener preferencias desde easy_preferences si existen (no sobreescribir) =====
         try {
             $prefRow = DB::table('easy_preferences')
                 ->where('proyecto_id', $proyecto->id)
@@ -55,7 +72,7 @@ class ProyectoEasyController extends Controller
 
             if ($prefRow && $prefRow->prefs) {
                 $prefs = json_decode($prefRow->prefs, true);
-                // solo tomar claves si vienen
+
                 if (!empty($prefs['cuenta_general']) && empty($prefill['cuenta_general'])) {
                     $prefill['cuenta_general'] = $prefs['cuenta_general'];
                 }
@@ -65,25 +82,27 @@ class ProyectoEasyController extends Controller
                 if (!empty($prefs['moneda_gestion']) && empty($prefill['moneda_gestion'])) {
                     $prefill['moneda_gestion'] = $prefs['moneda_gestion'];
                 }
-                if (!empty($prefs['ultimo_numero']) && empty($prefill['numero_descripcion_pieza'])) {
-                    // permitir que frontend reciba el último formato completo
-                    $prefill['numero_descripcion_pieza'] = $prefs['ultimo_numero'];
+
+                // exponemos ultimo_numero_full (pero no lo copiamos automáticamente en numero_descripcion_pieza)
+                if (!empty($prefs['ultimo_numero'])) {
+                    $prefill['ultimo_numero_full'] = $prefs['ultimo_numero'];
                 }
             }
         } catch (\Throwable $e) {
             Log::debug('easy.create: easy_preferences not available or error: ' . $e->getMessage());
         }
 
-        // Normalizar keys para compatibilidad
+        // Normalizar keys (minúscula + PascalCase para frontend)
         $outPrefill = [];
         foreach ($prefill as $k => $v) {
-            if ($v !== null) {
+            if ($v !== null && $v !== '') {
                 $outPrefill[$k] = $v;
                 $outPrefill[ucfirst($k)] = $v;
             }
         }
 
-        Log::info('easy.create prefill (to view):', $outPrefill);
+        // Log final: qué vamos a enviar al view
+        Log::info('easy.create prefill (to view):', ['proyecto_id' => $proyecto->id, 'prefill' => $outPrefill]);
 
         return inertia('proyectos/easycreate', [
             'proyecto' => $proyecto,
@@ -91,87 +110,34 @@ class ProyectoEasyController extends Controller
         ]);
     }
 
-    public function lastPrefill(Proyecto $proyecto, Request $request)
+    public function lastPrefill(Proyecto $proyecto)
     {
-        $table = $this->makeTableName($proyecto, $request->query('nombre'));
+        try {
+            $tableSuffix = strtolower(str_replace(' ', '_', $proyecto->nombre));
+            $tableEasy = 'easy_proyecto_' . $tableSuffix;
 
-        if (! Schema::hasTable($table)) {
-            return response()->json([
-                'ok' => true,
-                'next_numero' => 1,
-                'last_cuenta' => null,
-                'suggested_numero_full' => '1-Descripcion'
-            ]);
-        }
+            // obtener el último número usado
+            $last = DB::table($tableEasy)
+                ->orderByDesc('id')
+                ->value('numero_descripcion_pieza');
 
-        $incomingDescription = $request->query('descripcion') ?? null;
-        $incomingDescription = is_string($incomingDescription) ? trim($incomingDescription) : null;
-
-        // último registro
-        $last = DB::table($table)->orderByDesc('id')->first();
-
-        $lastCuenta = $last->cuenta_general ?? null;
-        $lastNumero = $last->numero_descripcion_pieza ?? null;
-
-        // extraer prefijo numérico si existe (soporta guion, underscore, punto)
-        $lastNum = null;
-        $lastRest = null;
-        if ($lastNumero && preg_match('/^\s*(\d+)\s*[-._]?\s*(.*)$/u', $lastNumero, $m)) {
-            $lastNum = intval($m[1]);
-            $lastRest = trim($m[2] ?? '');
-        }
-
-        // helper para limpiar la descripción (espacios -> underscore, colapsar guiones múltiples)
-        $sanitize = function ($str) {
-            $s = trim($str);
-            $s = preg_replace('/\s+/', '_', $s);           // espacios a _
-            $s = preg_replace('/_+/', '_', $s);            // colapsar _
-            $s = preg_replace("/[\r\n]+/", '', $s);        // quitar saltos
-            return $s;
-        };
-
-        if ($incomingDescription) {
-            $next = ($lastNum !== null) ? $lastNum + 1 : 1;
-            $descClean = $sanitize($incomingDescription);
-            $suggested = $next . '-' . $descClean;
-            return response()->json([
-                'ok' => true,
-                'next_numero' => $next,
-                'last_cuenta' => $lastCuenta,
-                'suggested_numero_full' => $suggested
-            ]);
-        }
-
-        if ($lastNumero) {
-            if ($lastNum !== null) {
-                $next = $lastNum + 1;
-                $rest = $lastRest ?: 'Descripcion';
-                $suggested = $next . '-' . $rest;
-                return response()->json([
-                    'ok' => true,
-                    'next_numero' => $next,
-                    'last_cuenta' => $lastCuenta,
-                    'suggested_numero_full' => $suggested
-                ]);
-            } else {
-                // si el último no tenía prefijo numérico, proponemos v2 o iniciar en 1
-                return response()->json([
-                    'ok' => true,
-                    'next_numero' => 1,
-                    'last_cuenta' => $lastCuenta,
-                    'suggested_numero_full' => ($lastNumero ? ($lastNumero . ' (v2)') : '1-Descripcion')
-                ]);
+            $nextNum = 1;
+            if ($last && preg_match('/^(\d+)/', $last, $m)) {
+                $nextNum = intval($m[1]) + 1;
             }
-        }
 
-        // no hay nada aún
-        return response()->json([
-            'ok' => true,
-            'next_numero' => 1,
-            'last_cuenta' => $lastCuenta,
-            'suggested_numero_full' => '1-Descripcion'
-        ]);
+            return response()->json([
+                'ok' => true,
+                'next_numero' => $nextNum
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'ok' => false,
+                'message' => $e->getMessage()
+            ], 500);
+        }
     }
+
 
     protected function makeTableName(Proyecto $proyecto, ?string $nombre = null): string
     {
@@ -229,10 +195,11 @@ class ProyectoEasyController extends Controller
     }
 
 
-    public function store(Request $request, \App\Models\Proyecto $proyecto)
-    {
+    public function store(Request $request, Proyecto $proyecto)
+{
+    try {
+        // Validación
         $validated = $request->validate([
-            'nombre' => 'required|string|max:255',
             'Cuenta_general' => 'required|string|max:255',
             'gasto_moneda_local' => 'nullable|numeric|min:0',
             'ingreso_moneda_local' => 'nullable|numeric|min:0',
@@ -240,166 +207,234 @@ class ProyectoEasyController extends Controller
             'debito_moneda_gestion' => 'nullable|numeric|min:0',
             'credito_moneda_gestion' => 'nullable|numeric|min:0',
             'moneda_gestion' => 'required|string|max:10',
-            'numero_descripcion_pieza' => 'required|string|max:255', // puede venir "398-Desc" o solo "Desc"
+            'numero_descripcion_pieza' => 'required|string|max:255',
+            'codigo_presupuestario' => 'nullable|string|max:255',
+            'naturaleza_presupuesto' => 'nullable|string|max:255',
+            'contrato' => 'nullable|string|max:255',
+            'bailleur_fondos' => 'nullable|string|max:255',
             'tipo_cambio' => 'nullable|numeric',
-            'fecha' => 'nullable|date'
+            'fecha' => 'nullable|date',
         ]);
 
-        // construir nombre de tabla
-        $tableSuffix = strtolower(str_replace(' ', '_', $validated['nombre']));
-        $tableSuffix = preg_replace('/[^a-z0-9_]/', '', $tableSuffix);
-        if ($tableSuffix === '') $tableSuffix = 'default';
+        // Nombre dinámico de la tabla
+        $tableSuffix = strtolower(str_replace(' ', '_', $proyecto->nombre));
         $tableEasy = 'easy_proyecto_' . $tableSuffix;
 
-        // asegurar existencia/columnas
-        $this->ensureTableExists($tableEasy);
-
-        // normalizador simple para la parte textual de la descripción
-        $sanitizeDesc = function ($str) {
-            $s = trim((string)$str);
-            $s = preg_replace('/\s+/', '_', $s);    // espacios -> _
-            $s = preg_replace('/_+/', '_', $s);     // colapsar underscores múltiples
-            $s = preg_replace("/[\r\n]+/", '', $s); // quitar saltos de línea
-            return $s;
-        };
-
-        // decidir fecha a usar (si no viene, hoy)
-        try {
-            $dt = isset($validated['fecha']) ? Carbon::parse($validated['fecha']) : Carbon::now();
-        } catch (\Throwable $e) {
-            $dt = Carbon::now();
+        // --- Asegurar que la tabla exista y que tenga la columna tipo_cambio ---
+        // Si la tabla no existe, la creamos con la estructura mínima (incluyendo tipo_cambio)
+        if (! Schema::hasTable($tableEasy)) {
+            Schema::create($tableEasy, function (Blueprint $t) {
+                $t->bigIncrements('id');
+                $t->string('n_acta')->nullable();
+                $t->date('fecha')->nullable();
+                $t->string('presupuestario', 255)->nullable();
+                $t->string('actividad', 255)->nullable();
+                $t->text('descripcion')->nullable();
+                $t->decimal('ingresos', 15, 2)->default(0);
+                $t->decimal('egresos', 15, 2)->default(0);
+                $t->decimal('saldo', 15, 2)->default(0);
+                $t->string('cuenta_general')->nullable();
+                $t->decimal('gasto_moneda_local', 15, 2)->default(0);
+                $t->decimal('ingreso_moneda_local', 15, 2)->default(0);
+                $t->string('moneda_facturacion', 10)->nullable();
+                $t->decimal('debito_moneda_gestion', 15, 2)->default(0);
+                $t->decimal('credito_moneda_gestion', 15, 2)->default(0);
+                $t->string('moneda_gestion', 10)->nullable();
+                $t->string('numero_descripcion_pieza', 255)->nullable();
+                $t->string('codigo_presupuestario', 255)->nullable();
+                $t->string('naturaleza_presupuesto', 50)->nullable();
+                $t->string('contrato', 255)->nullable();
+                $t->string('bailleur_fondos', 50)->nullable();
+                // columna tipo_cambio
+                $t->decimal('tipo_cambio', 18, 6)->nullable();
+                $t->timestamps();
+            });
+        } else {
+            // Si la tabla existe pero no tiene la columna tipo_cambio, la agregamos
+            if (! Schema::hasColumn($tableEasy, 'tipo_cambio')) {
+                Schema::table($tableEasy, function (Blueprint $t) use ($tableEasy) {
+                    $t->decimal('tipo_cambio', 18, 6)->nullable()->after('bailleur_fondos');
+                });
+            }
         }
-        $fechaParaGuardar = $dt->format('Y-m-d');
 
-        // insertar dentro de transacción para evitar duplicados en el número secuencial
-        $newId = null;
-
+        // --- Insertar registro dentro de transacción ---
+        DB::beginTransaction();
         try {
-            DB::transaction(function () use (&$newId, $tableEasy, $validated, $sanitizeDesc, $fechaParaGuardar, $proyecto, $dt) {
-                // obtener último registro bloqueando (si no hay ninguno, $last será null)
-                $last = DB::table($tableEasy)->lockForUpdate()->orderByDesc('id')->first();
-                $lastNumero = $last ? ($last->numero_descripcion_pieza ?? null) : null;
+            $insertData = [
+                'Cuenta_general' => $validated['Cuenta_general'],
+                'gasto_moneda_local' => $validated['gasto_moneda_local'] ?? 0,
+                'ingreso_moneda_local' => $validated['ingreso_moneda_local'] ?? 0,
+                'moneda_facturacion' => $validated['moneda_facturacion'],
+                'debito_moneda_gestion' => $validated['debito_moneda_gestion'] ?? 0,
+                'credito_moneda_gestion' => $validated['credito_moneda_gestion'] ?? 0,
+                'moneda_gestion' => $validated['moneda_gestion'],
+                'numero_descripcion_pieza' => $validated['numero_descripcion_pieza'],
+                'codigo_presupuestario' => $validated['codigo_presupuestario'] ?? null,
+                'naturaleza_presupuesto' => $validated['naturaleza_presupuesto'] ?? null,
+                'contrato' => $validated['contrato'] ?? null,
+                'bailleur_fondos' => $validated['bailleur_fondos'] ?? null,
+                // incluir tipo_cambio solo si la columna existe (verificación extra por seguridad)
+                'tipo_cambio' => Schema::hasColumn($tableEasy, 'tipo_cambio') ? ($validated['tipo_cambio'] ?? null) : null,
+                'fecha' => $validated['fecha'] ?? now()->toDateString(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ];
 
-                $lastNum = null;
-                $lastRest = null;
-                if ($lastNumero && preg_match('/^\s*(\d+)\s*[-._]?\s*(.*)$/u', $lastNumero, $m)) {
-                    $lastNum = intval($m[1]);
-                    $lastRest = trim($m[2] ?? '');
+            DB::table($tableEasy)->insert($insertData);
+
+            DB::commit();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            throw $e;
+        }
+
+        // --- Actualizar easy_preferences si llegaron claves relevantes (misma lógica que antes) ---
+        try {
+            $threshold = intval(env('EASY_TC_THRESHOLD', 3));
+            $userId = Auth::id();
+            $proyectoId = $proyecto->id;
+
+            $explicitKeys = [
+                'cuenta_general' => $validated['Cuenta_general'] ?? null,
+                'tipo_cambio' => array_key_exists('tipo_cambio', $validated) ? $validated['tipo_cambio'] : null,
+                'moneda_gestion' => $validated['moneda_gestion'] ?? null,
+                'moneda_facturacion' => $validated['moneda_facturacion'] ?? null,
+                'debito_moneda_gestion' => array_key_exists('debito_moneda_gestion', $validated) ? $validated['debito_moneda_gestion'] : null,
+                'credito_moneda_gestion' => array_key_exists('credito_moneda_gestion', $validated) ? $validated['credito_moneda_gestion'] : null,
+                'gasto_moneda_local' => array_key_exists('gasto_moneda_local', $validated) ? $validated['gasto_moneda_local'] : null,
+                'ingreso_moneda_local' => array_key_exists('ingreso_moneda_local', $validated) ? $validated['ingreso_moneda_local'] : null,
+                'numero_descripcion_pieza' => $validated['numero_descripcion_pieza'] ?? null,
+                'codigo_presupuestario' => $validated['codigo_presupuestario'] ?? null,
+                'naturaleza_presupuesto' => $validated['naturaleza_presupuesto'] ?? null,
+                'contrato' => $validated['contrato'] ?? null,
+                'bailleur_fondos' => $validated['bailleur_fondos'] ?? null,
+            ];
+
+            // obtener fila preferente user -> global
+            $prefRow = DB::table('easy_preferences')
+                ->where('proyecto_id', $proyectoId)
+                ->where('user_id', $userId)
+                ->whereNull('clave')
+                ->orderBy('id', 'desc')
+                ->first();
+
+            if (! $prefRow) {
+                $prefRow = DB::table('easy_preferences')
+                    ->where('proyecto_id', $proyectoId)
+                    ->whereNull('user_id')
+                    ->whereNull('clave')
+                    ->orderBy('id', 'desc')
+                    ->first();
+            }
+
+            $prefsToSave = [];
+            foreach ($explicitKeys as $k => $v) {
+                if ($v !== null && $v !== '') {
+                    $prefsToSave[$k] = $v;
                 }
+            }
 
-                $incoming = trim((string)$validated['numero_descripcion_pieza']);
-                $finalNumeroFull = null;
+            if (!empty($prefsToSave)) {
+                if ($prefRow) {
+                    $old = $prefRow->prefs ? json_decode($prefRow->prefs, true) : [];
+                    $merged = array_merge($old, $prefsToSave);
 
-                // si el incoming ya trae prefijo numérico (ej "398-....") lo respetamos (sanitizamos la parte textual)
-                if (preg_match('/^\s*(\d+)\s*[-._]?\s*(.*)$/u', $incoming, $mi)) {
-                    $num = intval($mi[1]);
-                    $rest = trim($mi[2] ?? '');
-                    $restSan = $rest ? $sanitizeDesc($rest) : ($lastRest ?: 'Descripcion');
-                    $finalNumeroFull = $num . '-' . $restSan;
-                } else {
-                    // incoming no tiene número; calculamos siguiente
-                    $next = ($lastNum !== null) ? ($lastNum + 1) : 1;
-                    $restSan = $incoming ? $sanitizeDesc($incoming) : ($lastRest ?: 'Descripcion');
-                    $finalNumeroFull = $next . '-' . $restSan;
-                }
+                    if (isset($prefsToSave['tipo_cambio'])) {
+                        $newRate = floatval($prefsToSave['tipo_cambio']);
+                        $existingRate = isset($old['tipo_cambio']) ? floatval($old['tipo_cambio']) : null;
 
-                // determinar tipo_cambio a usar: primero intentar obtener de exchange_rates (modelo exchange_rates)
-                $tipoCambioToUse = null;
-                try {
-                    if (class_exists(\App\Models\exchange_rates::class)) {
-                        $rateRow = \App\Models\exchange_rates::currentForProject($proyecto->id, (int)$dt->year, (int)$dt->month)
-                            ?? \App\Models\exchange_rates::fallbackGlobal((int)$dt->year, (int)$dt->month);
+                        if ($existingRate === null) {
+                            $merged['tipo_cambio'] = $newRate;
+                            $merged['tipo_cambio_usage'] = [
+                                'count' => 0,
+                                'last_value' => $newRate,
+                                'updated_at' => now()->toDateTimeString()
+                            ];
+                        } elseif (abs($existingRate - $newRate) > 0.000001) {
+                            $usage = $old['tipo_cambio_usage'] ?? ['count' => 0, 'last_value' => $existingRate, 'updated_at' => null];
 
-                        if ($rateRow && isset($rateRow->rate)) {
-                            $tipoCambioToUse = $rateRow->rate;
+                            if (!isset($usage['last_value']) || abs(floatval($usage['last_value']) - $newRate) > 0.000001) {
+                                $usage['count'] = intval(($usage['count'] ?? 0)) + 1;
+                                $usage['last_value'] = $newRate;
+                                $usage['updated_at'] = now()->toDateTimeString();
+                            } else {
+                                $usage['count'] = intval(($usage['count'] ?? 0)) + 1;
+                                $usage['updated_at'] = now()->toDateTimeString();
+                            }
+
+                            if ($usage['count'] >= $threshold) {
+                                $merged['tipo_cambio'] = $newRate;
+                                $usage['count'] = 0;
+                                $usage['last_value'] = $newRate;
+                                $usage['updated_at'] = now()->toDateTimeString();
+                            }
+
+                            $merged['tipo_cambio_usage'] = $usage;
+                        } else {
+                            $usage = $old['tipo_cambio_usage'] ?? ['count' => 0, 'last_value' => $existingRate, 'updated_at' => now()->toDateTimeString()];
+                            $usage['updated_at'] = now()->toDateTimeString();
+                            $merged['tipo_cambio_usage'] = $usage;
                         }
                     }
-                } catch (\Throwable $e) {
-                    Log::debug('Error buscando exchange rate: ' . $e->getMessage());
-                }
 
-                // si no se obtuvo, tomar la que envió el cliente (si existe)
-                if ($tipoCambioToUse === null && request()->filled('tipo_cambio')) {
-                    $tipoCambioToUse = request()->input('tipo_cambio');
-                }
-
-                // construir el array a insertar
-                $insert = [
-                    'cuenta_general' => $validated['Cuenta_general'],
-                    'gasto_moneda_local' => $validated['gasto_moneda_local'] ?? 0,
-                    'ingreso_moneda_local' => $validated['ingreso_moneda_local'] ?? 0,
-                    'moneda_facturacion' => $validated['moneda_facturacion'],
-                    'debito_moneda_gestion' => $validated['debito_moneda_gestion'] ?? 0,
-                    'credito_moneda_gestion' => $validated['credito_moneda_gestion'] ?? 0,
-                    'moneda_gestion' => $validated['moneda_gestion'],
-                    'numero_descripcion_pieza' => $finalNumeroFull,
-                    'codigo_presupuestario' => request()->input('codigo_presupuestario'),
-                    'naturaleza_presupuesto' => request()->input('naturaleza_presupuesto'),
-                    'contrato' => request()->input('contrato'),
-                    'bailleur_fondos' => request()->input('bailleur_fondos'),
-                    'fecha' => $fechaParaGuardar,
-                    'tipo_cambio' => $tipoCambioToUse,
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ];
-
-                // insertar
-                $newId = DB::table($tableEasy)->insertGetId($insert);
-
-                // actualizar/crear easy_preferences con último número y otros prefs relevantes
-                $this->ensurePreferencesTableExists();
-                $userId = Auth::id();
-                $proyectoId = $proyecto->id;
-
-                $prefsToSave = [
-                    'cuenta_general' => $validated['Cuenta_general'],
-                    'tipo_cambio' => $tipoCambioToUse !== null ? $tipoCambioToUse : (request()->input('tipo_cambio') ?? null),
-                    'moneda_gestion' => $validated['moneda_gestion'],
-                    'ultimo_numero' => $finalNumeroFull,
-                    'ultimo_fecha' => $fechaParaGuardar
-                ];
-                $prefsToSave = array_filter($prefsToSave, function ($v) {
-                    return $v !== null && $v !== '';
-                });
-
-                $existing = DB::table('easy_preferences')
-                    ->where('user_id', $userId)
-                    ->where('proyecto_id', $proyectoId)
-                    ->whereNull('clave')
-                    ->first();
-
-                if ($existing) {
-                    $old = $existing->prefs ? json_decode($existing->prefs, true) : [];
-                    $merged = array_merge($old, $prefsToSave);
-                    DB::table('easy_preferences')->where('id', $existing->id)->update([
+                    DB::table('easy_preferences')->where('id', $prefRow->id)->update([
                         'prefs' => json_encode($merged),
-                        'updated_at' => now()
+                        'updated_at' => now(),
+                    ]);
+
+                    ActivityLog::create([
+                        'user_id' => $userId,
+                        'action' => 'update',
+                        'model' => 'easy_preferences',
+                        'model_id' => $prefRow->id,
+                        'changes' => ['prefs' => $merged],
                     ]);
                 } else {
-                    DB::table('easy_preferences')->insert([
+                    if (isset($prefsToSave['tipo_cambio'])) {
+                        $rate = floatval($prefsToSave['tipo_cambio']);
+                        $prefsToSave['tipo_cambio_usage'] = [
+                            'count' => 0,
+                            'last_value' => $rate,
+                            'updated_at' => now()->toDateTimeString()
+                        ];
+                    }
+
+                    $insertId = DB::table('easy_preferences')->insertGetId([
                         'user_id' => $userId,
                         'proyecto_id' => $proyectoId,
                         'clave' => null,
                         'prefs' => json_encode($prefsToSave),
                         'created_at' => now(),
-                        'updated_at' => now()
+                        'updated_at' => now(),
+                    ]);
+
+                    ActivityLog::create([
+                        'user_id' => $userId,
+                        'action' => 'create',
+                        'model' => 'easy_preferences',
+                        'model_id' => $insertId,
+                        'changes' => ['prefs' => $prefsToSave],
                     ]);
                 }
-            }); // fin transaction
-
+            }
         } catch (\Throwable $e) {
-            Log::error('Error guardando registro EASY: ' . $e->getMessage());
-            return response()->json([
-                'message' => 'Error guardando registro EASY: ' . $e->getMessage()
-            ], 500);
+            Log::debug('easy.store: error updating easy_preferences - ' . $e->getMessage());
         }
 
         return response()->json([
-            'message' => 'Registro EASY guardado correctamente.',
-            'id' => $newId,
-            'table' => $tableEasy,
-        ], 201);
+            'ok' => true,
+            'message' => 'Registro EASY creado correctamente en ' . $tableEasy,
+        ]);
+    } catch (\Exception $e) {
+        return response()->json([
+            'ok' => false,
+            'message' => 'Error al guardar EASY: ' . $e->getMessage(),
+        ], 500);
     }
+}
+
+
 
     protected function ensurePreferencesTableExists()
     {
@@ -560,7 +595,6 @@ class ProyectoEasyController extends Controller
         ]);
     }
 
-    // mostrar
     public function editEasy(Proyecto $proyecto, $id)
     {
         $table = $this->makeTableName($proyecto);
@@ -597,8 +631,21 @@ class ProyectoEasyController extends Controller
             return redirect()->back()->with('error', "Tabla EASY no encontrada: {$table}");
         }
 
-        $data = $request->validate([
-            'descripcion' => 'nullable|string',
+        // Normaliza claves entrantes a snake_case para aceptar camelCase / PascalCase desde frontend
+        $payload = collect($request->all())
+            ->mapWithKeys(function ($value, $key) {
+                return [Str::snake($key) => $value];
+            })
+            ->toArray();
+
+        Log::debug('updateEasy payload normalized', [
+            'table' => $table,
+            'id' => $id,
+            'payload' => $payload,
+        ]);
+
+        // Validación: NOTA — aquí NO está 'descripcion' porque la tabla NO la contiene
+        $validated = validator($payload, [
             'fecha' => 'nullable|date',
             'gasto_moneda_local' => 'nullable|numeric',
             'ingreso_moneda_local' => 'nullable|numeric',
@@ -612,17 +659,33 @@ class ProyectoEasyController extends Controller
             'tipo_cambio' => 'nullable|numeric',
             'n_acta' => 'nullable|string|max:100',
             'cuenta_general' => 'nullable|string|max:255',
-        ]);
+        ])->validate();
 
-        // sólo columnas existentes — evita SQL errors por columnas ausentes
+        // Filtra sólo columnas existentes en la tabla para evitar errores
         $columns = Schema::getColumnListing($table);
-        $allowed = array_intersect_key($data, array_flip($columns));
-        $allowed['updated_at'] = now();
+        $allowed = array_intersect_key($validated, array_flip($columns));
+
+        // Si no hay campos coincidentes, actualiza solo updated_at (opcional)
+        if (empty($allowed)) {
+            $allowed['updated_at'] = now();
+        } else {
+            $allowed['updated_at'] = now();
+        }
 
         try {
-            DB::table($table)->where('id', $id)->update($allowed);
+            $updatedRows = DB::table($table)->where('id', $id)->update($allowed);
+            Log::info('updateEasy success', [
+                'table' => $table,
+                'id' => $id,
+                'payload' => $allowed,
+                'rows' => $updatedRows,
+            ]);
         } catch (\Throwable $e) {
-            Log::error("updateEasy DB error en {$table}: " . $e->getMessage(), ['table' => $table, 'id' => $id, 'payload' => $allowed]);
+            Log::error("updateEasy DB error en {$table}: " . $e->getMessage(), [
+                'table' => $table,
+                'id' => $id,
+                'payload' => $allowed
+            ]);
             return redirect()->back()->with('error', 'Error al actualizar: ' . $e->getMessage());
         }
 

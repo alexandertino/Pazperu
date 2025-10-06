@@ -1,13 +1,39 @@
 <template>
   <AuthenticatedLayout>
     <div class="max-w-3xl mx-auto p-6 bg-white dark:bg-gray-800 rounded shadow">
-      <h2 class="text-xl font-semibold mb-4 dark:text-white">Editar Descripción — ID: {{ acta.id }}</h2>
+      <h2 class="text-xl font-semibold mb-4 dark:text-white">
+        Editar Caja — ID: {{ acta.id }}
+      </h2>
 
-      <form @submit.prevent="submit">
+      <form @submit.prevent="submit" class="grid grid-cols-1 gap-4">
+        <div>
+          <label class="block text-sm font-medium dark:text-white">N° Acta</label>
+          <input v-model="form.n_acta" type="text" maxlength="50" class="mt-1 w-full p-2 border rounded" />
+          <p v-if="form.errors.n_acta" class="text-red-500 text-sm">{{ form.errors.n_acta }}</p>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium dark:text-white">Fecha</label>
+          <input v-model="form.fecha" type="date" class="mt-1 w-full p-2 border rounded" />
+          <p v-if="form.errors.fecha" class="text-red-500 text-sm">{{ form.errors.fecha }}</p>
+        </div>
+
         <div>
           <label class="block text-sm font-medium dark:text-white">Descripción</label>
-          <textarea v-model="form.descripcion" maxlength="50" class="mt-1 w-full p-2 border rounded" rows="3"></textarea>
+          <textarea v-model="form.descripcion" maxlength="255" class="mt-1 w-full p-2 border rounded" rows="3"></textarea>
           <p v-if="form.errors.descripcion" class="text-red-500 text-sm">{{ form.errors.descripcion }}</p>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium dark:text-white">Presupuestario</label>
+          <input v-model="form.presupuestario" type="text" maxlength="100" class="mt-1 w-full p-2 border rounded" />
+          <p v-if="form.errors.presupuestario" class="text-red-500 text-sm">{{ form.errors.presupuestario }}</p>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium dark:text-white">Actividad</label>
+          <input v-model="form.actividad" type="text" maxlength="10" class="mt-1 w-full p-2 border rounded" />
+          <p v-if="form.errors.actividad" class="text-red-500 text-sm">{{ form.errors.actividad }}</p>
         </div>
 
         <div class="mt-4 flex justify-end gap-2">
@@ -35,25 +61,20 @@ const props = defineProps({
   tabla: String,
 });
 
-// form con sólo descripcion
 const form = useForm({
-  descripcion: props.acta.descripcion || '',
+  n_acta:         props.acta?.n_acta ?? '',
+  fecha:          props.acta?.fecha ? String(props.acta.fecha).slice(0, 10) : '',
+  descripcion:    props.acta?.descripcion ?? '',
+  presupuestario: props.acta?.presupuestario ?? '',
+  actividad:      props.acta?.actividad ?? 'A.',
 });
 
-// usar usePage() correctamente (importado arriba)
 const page = usePage();
 const flashSuccess = computed(() => page.props.value?.flash?.success ?? null);
 const flashError   = computed(() => page.props.value?.flash?.error ?? null);
 
 function submit() {
-  form.put(route('proyectos.am.update', { proyecto: props.proyecto.id, id: props.acta.id }), {
-    onSuccess: () => {
-      // la redirección del servidor actualizará los flash messages
-    },
-    onError: () => {
-      // errores de validación quedan en form.errors
-    }
-  });
+  form.put(route('proyectos.amcaja.update', { proyecto: props.proyecto.id, id: props.acta.id }));
 }
 
 function volver() {

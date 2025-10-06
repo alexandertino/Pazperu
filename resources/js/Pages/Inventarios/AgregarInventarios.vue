@@ -9,7 +9,10 @@ import Swal from 'sweetalert2';
 const user = usePage().props.auth.user;
 
 const props = defineProps({
-    proyecto: Object
+    proyecto: Object,
+    categorias: { type: Array, default: () => [] },
+    UnidadMedida: { type: Array, default: () => [] },
+    solicitantes: { type: Array, default: () => [] },
 });
 
 const form = useForm({
@@ -27,8 +30,13 @@ const form = useForm({
     codigo: '',
     precio: '',
     solicitado_por: '',
-    comentario: ''
+    comentario: '',
+    am_table: '',
+    am_row_id: '',
+    am_from_desc: '',
+    am_from_fecha: ''
 });
+
 
 const categorias = ref([]);
 const unidades = ref([]);
@@ -86,21 +94,141 @@ const syncCombosToForm = () => {
 };
 
 onMounted(async () => {
+    // -----------------------
+    // Helper: parsear fecha y devolver YYYY-MM-DD o null
+    // -----------------------
+    const parseDateToYMD = (raw) => {
+        if (!raw) return null;
+        raw = decodeURIComponent(String(raw)).trim();
+
+        const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (isoMatch) {
+            const [ , y, m, d ] = isoMatch;
+            const dt = new Date(`${y}-${m}-${d}T00:00:00`);
+            if (!Number.isNaN(dt.getTime())) return `${y}-${m}-${d}`;
+        }
+
+        const ymdSlash = raw.match(/^(\d{4})\/(\d{2})\/(\d{2})$/);
+        if (ymdSlash) {
+            const [ , y, m, d ] = ymdSlash;
+            const dt = new Date(`${y}-${m}-${d}T00:00:00`);
+            if (!Number.isNaN(dt.getTime())) return `${y}-${m}-${d}`;
+        }
+
+        const dmy = raw.match(/^(\d{2})[\/\-](\d{2})[\/\-](\d{4})$/);
+        if (dmy) {
+            const [ , dd, mm, yyyy ] = dmy;
+            const dt = new Date(`${yyyy}-${mm}-${dd}T00:00:00`);
+            if (!Number.isNaN(dt.getTime())) return `${yyyy}-${mm}-${dd}`;
+        }
+
+        const maybeDate = new Date(raw);
+        if (!Number.isNaN(maybeDate.getTime())) {
+            const y = maybeDate.getFullYear();
+            const m = String(maybeDate.getMonth() + 1).padStart(2, '0');
+            const d = String(maybeDate.getDate()).padStart(2, '0');
+            return `${y}-${m}-${d}`;
+        }
+
+        return null;
+    };
+
+    // -----------------------
+    // Leer query params (AM)
+    // -----------------------
     try {
-        const resCat = await axios.get("/categorias");
-        categorias.value = resCat.data;
+        const params = new URLSearchParams(window.location.search);
+        const am_table = params.get('am_table');
+        const am_row_id = params.get('am_row_id');
+        const am_desc = params.get('descripcion') || params.get('am_from_desc');
+        const am_fecha_raw = params.get('fecha') || params.get('am_from_fecha') || params.get('am_fecha');
+        const am_num_raw = params.get('numero');
 
-        const resUni = await axios.get("/unidades-medida");
-        unidades.value = resUni.data;
+        if (am_table) {
+            form.am_table = am_table;
+            form.am_row_id = am_row_id || '';
+            if (am_desc) {
+                form.descripcion = form.descripcion || decodeURIComponent(am_desc);
+                form.am_from_desc = am_desc;
+            }
 
-        const resSol = await axios.get("/solicitantes");
-        solicitantes.value = resSol.data;
+            Swal.fire({
+                title: 'Procede vincular con Acta',
+                html: `Se detectó una acta: <b>${am_table}</b> (id: <b>${am_row_id || ''}</b>). Al guardar, se creará la vinculación.`,
+                icon: 'info',
+                confirmButtonText: 'Entendido'
+            });
+        }
+
+        if (am_num_raw) {
+            const matches = (String(am_num_raw).match(/\d+/g) || []);
+            let digits = matches.length ? matches[matches.length - 1] : '';
+            if (!digits) {
+                form.numero = '';
+            } else {
+                digits = digits.slice(-3);
+                form.numero = String(digits).padStart(3, '0');
+            }
+        }
+
+        const parsedFecha = parseDateToYMD(am_fecha_raw);
+        if (parsedFecha) {
+            if (!form.fecha || String(form.fecha).trim() === '') {
+                form.fecha = parsedFecha;
+                form.am_from_fecha = am_fecha_raw;
+            }
+        }
     } catch (err) {
-        console.error("Error cargando datos iniciales:", err);
+        console.warn('No se pudieron leer params AM:', err);
     }
 
+    // año por defecto
     if (!form.anio || String(form.anio).trim() === '') {
         form.anio = String(new Date().getFullYear());
+    }
+
+    // -----------------------
+    // Cargar listas (preferir props, si no => intentar endpoint)
+    // -----------------------
+    const assignListSafely = (src) => {
+        if (!Array.isArray(src)) return [];
+        return src.map(item => ({ id: item.id ?? null, nombre: item.nombre ?? String(item) ?? '' }));
+    };
+
+    // Usar props.categorias, props.UnidadMedida y props.solicitantes (si vienen)
+    if (Array.isArray(props.categorias) || Array.isArray(props.UnidadMedida) || Array.isArray(props.solicitantes)) {
+        categorias.value = assignListSafely(props.categorias || []);
+        unidades.value = assignListSafely(props.UnidadMedida || []); // <-- aquí usamos UnidadMedida
+        solicitantes.value = assignListSafely(props.solicitantes || []);
+    } else {
+        // Intentar cargar vía endpoint
+        try {
+            const res = await axios.get(`/proyectos/${props.proyecto.id}/inventario/meta`);
+            categorias.value = assignListSafely(res.data.categorias || []);
+            unidades.value = assignListSafely(res.data.UnidadMedida || []); // <-- y aquí también
+            solicitantes.value = assignListSafely(res.data.solicitantes || []);
+        } catch (err) {
+            console.warn('No se pudieron cargar listas meta (categoria/unidad/solicitantes):', err);
+            categorias.value = categorias.value || [];
+            unidades.value = unidades.value || [];
+            solicitantes.value = solicitantes.value || [];
+        }
+    }
+
+    // seleccionar primer elemento por defecto si no hay valor en el form
+    const firstNonEmpty = (arr) => (Array.isArray(arr) && arr.length ? arr.find(x => String(x.nombre || '').trim() !== '') : null);
+
+    if (!form.categoria) {
+        const first = firstNonEmpty(categorias.value);
+        if (first) seleccionarCategoria(first.nombre);
+    }
+    if (!form.unidad_medida) {
+        const firstU = firstNonEmpty(unidades.value);
+        if (firstU) seleccionarUnidades(firstU.nombre);
+    }
+    if (!form.solicitado_por) {
+        const firstS = firstNonEmpty(solicitantes.value);
+        if (firstS) seleccionarSolicitantes(firstS.nombre);
     }
 });
 
@@ -565,11 +693,11 @@ const handleComboKey = (event, tipo) => {
 
     const mostrar = tipo === 'categoria' ? mostrarCategorias.value
         : tipo === 'unidades' ? mostrarUnidades.value
-        : mostrarSolicitantes.value;
+            : mostrarSolicitantes.value;
 
     const lista = tipo === 'categoria' ? filtradas.value
         : tipo === 'unidades' ? filtradasUni.value
-        : filtradasSol.value;
+            : filtradasSol.value;
 
     if ((key === 'Enter' || key === 'Tab') && mostrar && lista.length > 0) {
         event.preventDefault();
@@ -680,7 +808,8 @@ const handleComboKey = (event, tipo) => {
                     <input v-model="searchCategoria" type="text"
                         class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white focusable"
                         @focus="mostrarCategorias = true" @input="mostrarCategorias = true"
-                        @focusout="onComboFocusOut($event, 'categoria')" @keydown="handleComboKey($event, 'categoria')" required />
+                        @focusout="onComboFocusOut($event, 'categoria')" @keydown="handleComboKey($event, 'categoria')"
+                        required />
 
                     <!-- Lista desplegable -->
                     <ul v-if="mostrarCategorias && filtradas.length > 0"
@@ -700,7 +829,8 @@ const handleComboKey = (event, tipo) => {
                     <input v-model="searchUnidades" type="text"
                         class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white focusable"
                         @focus="mostrarUnidades = true" @input="mostrarUnidades = true"
-                        @focusout="onComboFocusOut($event, 'unidades')" @keydown="handleComboKey($event, 'unidades')" required />
+                        @focusout="onComboFocusOut($event, 'unidades')" @keydown="handleComboKey($event, 'unidades')"
+                        required />
 
                     <!-- Lista desplegable -->
                     <ul v-if="mostrarUnidades && filtradasUni.length > 0"
@@ -736,8 +866,8 @@ const handleComboKey = (event, tipo) => {
                     <input v-model="searchSolicitantes" type="text"
                         class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white focusable"
                         @focus="mostrarSolicitantes = true" @input="mostrarSolicitantes = true"
-                        @focusout="onComboFocusOut($event, 'solicitantes')" @keydown="handleComboKey($event, 'solicitantes')"
-                        required />
+                        @focusout="onComboFocusOut($event, 'solicitantes')"
+                        @keydown="handleComboKey($event, 'solicitantes')" required />
 
                     <!-- Lista desplegable -->
                     <ul v-if="mostrarSolicitantes && filtradasSol.length > 0"

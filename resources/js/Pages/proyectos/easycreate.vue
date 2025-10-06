@@ -1,48 +1,45 @@
 <script setup>
-/*
-  easycreate.vue - Script corregido
-  - IMPORTANTE: importa usePage desde @inertiajs/vue3, no desde 'vue'
-  - Añadí campo `fecha` y un cuadro condicional junto a `bailleur_fondos`.
-*/
+/**
+ * Componente: formulario EASY (completo)
+ * Incluye: navegación por teclado (Enter / flechas)
+ */
 
-import { reactive, ref, computed, watch, onMounted, defineProps } from 'vue';
-import { usePage } from '@inertiajs/vue3';            // <-- CORRECTO
+/* ----------------------------- Imports ----------------------------- */
+import { reactive, ref, computed, watch, onMounted, defineProps, nextTick, onUnmounted } from 'vue';
+import { usePage } from '@inertiajs/vue3';
 import axios from 'axios';
 import Swal from 'sweetalert2';
-import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'; // asegúrate que la ruta es correcta
+import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 
-// Props e Inertia page
+/* ----------------------------- Props / Página ----------------------------- */
 const props = defineProps({
   proyecto: { type: Object, required: false, default: () => ({ id: 0, nombre: '' }) },
   prefill: { type: Object, default: () => ({}) },
   user: { type: Object, required: false, default: () => (null) }
 });
 
-const page = usePage(); // Inertia page (si el servidor puso prefill en page.props lo tomamos)
+const page = usePage();
 
-// CSRF
+/* ----------------------------- Axios / CSRF ----------------------------- */
 const tokenMeta = document.querySelector('meta[name="csrf-token"]');
 if (tokenMeta) axios.defaults.headers.common['X-CSRF-TOKEN'] = tokenMeta.getAttribute('content');
 axios.defaults.headers.common['Accept'] = 'application/json';
 
-/* Estados */
+/* ----------------------------- Estados globales ----------------------------- */
 const monedaLocal = ref('PEN');
 const monedaGestion = ref('EUR');
-const tipoCambio = ref(Number(props.prefill.tipo_cambio ?? 0) || 0);
+const tipoCambio = ref(Number(props.prefill?.tipo_cambio ?? 0) || 0);
 
 const errors = reactive({});
 const loadingPrefill = ref(false);
 const submitting = ref(false);
 
-// Preferimos props.prefill (si fue pasado explícitamente), si no usamos page.props.prefill
+/* Preferimos props.prefill explícito, si no existe buscamos page.props.prefill */
 const serverPrefill = (props.prefill && Object.keys(props.prefill).length > 0)
   ? props.prefill
   : (page.props?.prefill ?? {});
 
-// DEBUG: ver qué llega
-console.log('serverPrefill:', serverPrefill);
-
-/* Form */
+/* ----------------------------- Formulario (reactive) ----------------------------- */
 const todayISO = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 const form = reactive({
   Cuenta_general: serverPrefill.Cuenta_general ?? '',
@@ -52,16 +49,17 @@ const form = reactive({
   debito_moneda_gestion: Number(serverPrefill.debito_moneda_gestion ?? 0),
   credito_moneda_gestion: Number(serverPrefill.credito_moneda_gestion ?? 0),
   moneda_gestion: serverPrefill.moneda_gestion ?? monedaGestion.value,
-  numero_descripcion_pieza: serverPrefill.numero_descripcion_pieza ?? serverPrefill.descripcion ?? '',
+  numero_descripcion_pieza: serverPrefill.numero_descripcion_pieza ?? '',
   codigo_presupuestario: serverPrefill.codigo_presupuestario ?? '',
-  naturaleza_presupuesto: serverPrefill.naturaleza_presupuesto ?? '',
+  naturaleza_presupuesto: serverPrefill.naturaleza_presupuesto ?? '1',
   contrato: serverPrefill.contrato ?? '',
   bailleur_fondos: serverPrefill.bailleur_fondos ?? '',
-  fecha: serverPrefill.fecha ?? todayISO, // <-- añadido
-  anio: serverPrefill.anio ?? String(new Date().getFullYear())
+  fecha: serverPrefill.fecha ?? todayISO,
+  anio: serverPrefill.anio ?? String(new Date().getFullYear()),
+  descripcion: serverPrefill.descripcion ?? ''
 });
 
-/* Helpers y computeds */
+/* ----------------------------- Helpers / Computeds ----------------------------- */
 function round(value, decimals = 2) {
   const factor = Math.pow(10, decimals);
   return Math.round((Number(value) + Number.EPSILON) * factor) / factor;
@@ -75,14 +73,15 @@ const ingresoGestion = computed(() => {
   const tc = Number(tipoCambio.value) || 1;
   return round((Number(form.ingreso_moneda_local) || 0) / tc, 2);
 });
+
 const formattedGastoGestion = computed(() => (Number(gastoGestion.value) || 0).toFixed(2));
 const formattedIngresoGestion = computed(() => (Number(ingresoGestion.value) || 0).toFixed(2));
 
-// mostrar cuadro junto a bailleur cuando tenga valor
 const showBailleurBox = computed(() => {
   return !!(form.bailleur_fondos && String(form.bailleur_fondos).trim() !== '');
 });
 
+/* Mantener sincronizados ciertos campos cuando cambian montos/tipo de cambio */
 watch([() => form.gasto_moneda_local, () => form.ingreso_moneda_local, tipoCambio], () => {
   form.debito_moneda_gestion = gastoGestion.value;
   form.credito_moneda_gestion = ingresoGestion.value;
@@ -90,63 +89,24 @@ watch([() => form.gasto_moneda_local, () => form.ingreso_moneda_local, tipoCambi
   form.moneda_gestion = monedaGestion.value;
 });
 
-/* onMounted: pedir suggested number / last account si hace falta */
-onMounted(async () => {
-  const necesitaNumero = !form.numero_descripcion_pieza || String(form.numero_descripcion_pieza).trim() === '';
-  const necesitaCuenta = !form.Cuenta_general || String(form.Cuenta_general).trim() === '';
-
-  // si no hace falta nada, aún así intentamos rellenar preferencias (tipo_cambio, moneda) si vienen del serverPrefill
-  if (!necesitaNumero && !necesitaCuenta) {
-    // si serverPrefill trae tipo_cambio/moneda, aplicarlos
-    if (serverPrefill.tipo_cambio) tipoCambio.value = Number(serverPrefill.tipo_cambio) || tipoCambio.value;
-    if (serverPrefill.moneda_gestion) form.moneda_gestion = serverPrefill.moneda_gestion;
-    if (serverPrefill.Cuenta_general) form.Cuenta_general = serverPrefill.Cuenta_general;
-    return;
-  }
-
-  loadingPrefill.value = true;
-  try {
-    const res = await axios.get(`/proyectos/${props.proyecto.id}/easy/last-prefill`, {
-      params: {
-        nombre: props.proyecto?.nombre ?? null,
-        // enviamos la descripcion que el usuario ya haya escrito (o la que vino en prefill)
-        descripcion: (form.numero_descripcion_pieza || props.prefill?.descripcion || serverPrefill.descripcion || '').toString().trim() || null
-      }
-    });
-
-    // aplicar sugerencias del servidor
-    if (res?.data) {
-      const data = res.data;
-      if (data.suggested_numero_full && (!form.numero_descripcion_pieza || String(form.numero_descripcion_pieza).trim() === '')) {
-        form.numero_descripcion_pieza = data.suggested_numero_full;
-      }
-      if (data.last_cuenta && (!form.Cuenta_general || String(form.Cuenta_general).trim() === '')) {
-        form.Cuenta_general = data.last_cuenta;
-      }
-      // si tu backend devuelve tipo_cambio y moneda (vía create/prefill) las aplicamos:
-      if (serverPrefill.tipo_cambio) tipoCambio.value = Number(serverPrefill.tipo_cambio) || tipoCambio.value;
-      if (serverPrefill.moneda_gestion) form.moneda_gestion = serverPrefill.moneda_gestion;
-    }
-  } catch (err) {
-    console.error('Error cargando last-prefill:', err);
-  } finally {
-    loadingPrefill.value = false;
-  }
-});
-
-
-/* Validación, payload y guardar */
+/* ----------------------------- Validación / Payload / Guardar ----------------------------- */
 function validarCampos() {
   Object.keys(errors).forEach(k => delete errors[k]);
-  if (!form.Cuenta_general || String(form.Cuenta_general).trim().length < 1) errors.Cuenta_general = 'La cuenta general es requerida.';
-  if (!form.numero_descripcion_pieza || String(form.numero_descripcion_pieza).trim() === '') errors.numero_descripcion_pieza = 'La numeración/descripción es requerida.';
-  if ((Number(form.gasto_moneda_local) > 0 || Number(form.ingreso_moneda_local) > 0) && (!tipoCambio.value || Number(tipoCambio.value) <= 0)) {
+
+  if (!form.Cuenta_general || String(form.Cuenta_general).trim().length < 1) {
+    errors.Cuenta_general = 'La cuenta general es requerida.';
+  }
+  if (!form.numero_descripcion_pieza || String(form.numero_descripcion_pieza).trim() === '') {
+    errors.numero_descripcion_pieza = 'La numeración/descripción es requerida.';
+  }
+  if ((Number(form.gasto_moneda_local) > 0 || Number(form.ingreso_moneda_local) > 0) &&
+      (!tipoCambio.value || Number(tipoCambio.value) <= 0)) {
     errors.tipo_cambio = 'El tipo de cambio debe ser mayor a 0 para convertir montos.';
   }
-  // validar fecha
   if (!form.fecha || String(form.fecha).trim() === '') {
     errors.fecha = 'La fecha es requerida.';
   }
+
   return Object.keys(errors).length === 0;
 }
 
@@ -194,7 +154,7 @@ function resetForm() {
   form.moneda_gestion = monedaGestion.value;
   form.numero_descripcion_pieza = '';
   form.codigo_presupuestario = '';
-  form.naturaleza_presupuesto = '';
+  form.naturaleza_presupuesto = '1';
   form.contrato = '';
   form.bailleur_fondos = '';
   form.fecha = todayISO;
@@ -203,9 +163,21 @@ function resetForm() {
 }
 
 const guardarNormal = async () => {
-  if (!validarCampos()) { Swal.fire('⚠️ Errores', 'Corrige los errores en el formulario.', 'warning'); return; }
-  const confirm = await Swal.fire({ title: '¿Guardar EASY?', text: 'Se registrará en la tabla EASY del proyecto.', icon: 'question', showCancelButton: true, confirmButtonText: 'Sí, guardar', cancelButtonText: 'Cancelar' });
+  if (!validarCampos()) {
+    Swal.fire('⚠️ Errores', 'Corrige los errores en el formulario.', 'warning');
+    return;
+  }
+
+  const confirm = await Swal.fire({
+    title: '¿Guardar EASY?',
+    text: 'Se registrará en la tabla EASY del proyecto.',
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonText: 'Sí, guardar',
+    cancelButtonText: 'Cancelar'
+  });
   if (!confirm.isConfirmed) return;
+
   const payload = crearPayloadPlano();
   const url = window.LARAVEL?.storeEasyUrl || `/proyectos/${props.proyecto?.id || '0'}/easy/store`;
 
@@ -219,7 +191,9 @@ const guardarNormal = async () => {
     if (err.response?.data?.errors) {
       const respErrors = err.response.data.errors;
       Object.keys(errors).forEach(k => delete errors[k]);
-      for (const k in respErrors) errors[k] = Array.isArray(respErrors[k]) ? respErrors[k].join(' ') : String(respErrors[k]);
+      for (const k in respErrors) {
+        errors[k] = Array.isArray(respErrors[k]) ? respErrors[k].join(' ') : String(respErrors[k]);
+      }
       Swal.fire('⚠️ No guardado', 'Corrige los errores.', 'warning');
     } else {
       Swal.fire('❌ Error', err.response?.data?.message ?? 'Error al guardar', 'error');
@@ -228,6 +202,283 @@ const guardarNormal = async () => {
     submitting.value = false;
   }
 };
+
+/* ----------------------------- Numeración automática / helpers ----------------------------- */
+const numeroInputRef = ref(null);
+const lastNumeroFull = ref('');
+const lastNum = ref(null);
+const suggestedNextFull = ref('');
+
+function parseNumeroPrefix(str) {
+  if (!str) return { num: null, rest: '' };
+  const m = String(str).trim().match(/^\s*(\d+)\s*[-._]?\s*(.*)$/u);
+  if (m) {
+    return { num: parseInt(m[1], 10), rest: (m[2] || '').trim() };
+  }
+  return { num: null, rest: str.trim() };
+}
+
+async function fillNextPrefixAndFocus(nextNum) {
+  if (!nextNum) return;
+  const currentParsed = parseNumeroPrefix(form.numero_descripcion_pieza || '');
+  if (currentParsed.num && String(form.numero_descripcion_pieza).trim() !== '') {
+    return;
+  }
+  form.numero_descripcion_pieza = `${nextNum}-`;
+  await nextTick();
+  try {
+    const el = numeroInputRef.value;
+    if (el && typeof el.focus === 'function') {
+      el.focus();
+      const len = String(form.numero_descripcion_pieza).length;
+      if (typeof el.setSelectionRange === 'function') {
+        el.setSelectionRange(len, len);
+      }
+    }
+  } catch (e) {
+    console.debug('No se pudo colocar el cursor:', e);
+  }
+}
+
+function usarSiguiente() {
+  if (lastNum.value !== null) fillNextPrefixAndFocus(lastNum.value + 1);
+}
+
+function handleNumeroBlur() {
+  const val = String(form.numero_descripcion_pieza || '').trim();
+  if (!val) return;
+  if (/^\d+$/.test(val)) {
+    form.numero_descripcion_pieza = `${val}-`;
+    nextTick(() => {
+      const el = numeroInputRef.value;
+      if (el && typeof el.focus === 'function') {
+        el.focus();
+        const len = String(form.numero_descripcion_pieza).length;
+        if (typeof el.setSelectionRange === 'function') el.setSelectionRange(len, len);
+      }
+    });
+  }
+}
+
+/* ----------------------------- Lifecycle: onMounted (prefill desde servidor) ----------------------------- */
+onMounted(async () => {
+  const necesitaNumero = !form.numero_descripcion_pieza || String(form.numero_descripcion_pieza).trim() === '';
+  const necesitaCuenta = !form.Cuenta_general || String(form.Cuenta_general).trim() === '';
+
+  if (!necesitaNumero && !necesitaCuenta) {
+    if (serverPrefill.tipo_cambio) tipoCambio.value = Number(serverPrefill.tipo_cambio) || tipoCambio.value;
+    if (serverPrefill.moneda_gestion) form.moneda_gestion = serverPrefill.moneda_gestion;
+    if (serverPrefill.Cuenta_general) form.Cuenta_general = serverPrefill.Cuenta_general;
+    return;
+  }
+
+  loadingPrefill.value = true;
+  try {
+    const res = await axios.get(`/proyectos/${props.proyecto.id}/easy/last-prefill`, {
+      params: {
+        nombre: props.proyecto?.nombre ?? null,
+        descripcion: null
+      }
+    });
+
+    if (res?.data) {
+      const data = res.data;
+
+      if (data.last_num_full) {
+        lastNumeroFull.value = data.last_num_full;
+        const p = parseNumeroPrefix(data.last_num_full);
+        lastNum.value = p.num !== null ? p.num : null;
+      } else if (data.last && typeof data.last === 'string') {
+        lastNumeroFull.value = data.last;
+        const p = parseNumeroPrefix(lastNumeroFull.value);
+        lastNum.value = p.num !== null ? p.num : null;
+      } else {
+        lastNumeroFull.value = '';
+        lastNum.value = null;
+      }
+
+      if (typeof data.next_numero !== 'undefined' &&
+          (!form.numero_descripcion_pieza || String(form.numero_descripcion_pieza).trim() === '')) {
+
+        const descripcion =
+          (form.descripcion && String(form.descripcion).trim() !== '')
+            ? String(form.descripcion).trim()
+            : (serverPrefill.descripcion && String(serverPrefill.descripcion).trim() !== '')
+              ? String(serverPrefill.descripcion).trim()
+              : '';
+
+        form.numero_descripcion_pieza = descripcion
+          ? `${data.next_numero}-${descripcion}`
+          : `${data.next_numero}-`;
+
+        suggestedNextFull.value = form.numero_descripcion_pieza;
+      }
+
+      if (data.last_cuenta && (!form.Cuenta_general || String(form.Cuenta_general).trim() === '')) {
+        form.Cuenta_general = data.last_cuenta;
+      }
+
+      if (serverPrefill.tipo_cambio) tipoCambio.value = Number(serverPrefill.tipo_cambio) || tipoCambio.value;
+      if (serverPrefill.moneda_gestion) form.moneda_gestion = serverPrefill.moneda_gestion;
+    }
+  } catch (err) {
+    console.error('Error cargando last-prefill:', err);
+  } finally {
+    loadingPrefill.value = false;
+  }
+});
+
+/* ----------------------------- Utilidades / Navegación ----------------------------- */
+const volverATabla = () => {
+  window.location.href = `/proyectos/${props.proyecto.id}/inventario-salidas`;
+};
+
+const BAILLEUR_MAP = {
+  1: 'fonds propres IDP',
+  2: 'Union européenne',
+  3: 'DGD',
+  4: 'MAE Lux',
+  5: 'FBSA',
+  6: 'A REPARTIR'
+};
+
+const bailleurCodigo = ref('');
+const bailleurNombre = computed(() => {
+  const codigo = String(bailleurCodigo.value || '').trim();
+  return BAILLEUR_MAP[codigo] || '';
+});
+
+/* ----------------------------- NAVEGACIÓN POR TECLADO (formulario) ----------------------------- */
+/**
+ * Reglas:
+ *  - Enter / ArrowRight / ArrowDown -> siguiente control
+ *  - ArrowLeft / ArrowUp -> anterior
+ *  - En input[type=number] preservamos comportamiento nativo para ArrowUp/ArrowDown
+ *    salvo que se mantenga Alt (Alt+↑/↓ fuerza navegación).
+ */
+const formEl = ref(null);
+
+function handleKeydown(e) {
+  const key = e.key;
+  if (!['Enter', 'ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown'].includes(key)) return;
+
+  const container = formEl.value || e.currentTarget;
+  if (!container) return;
+
+  const selector = [
+    'input:not([type="hidden"]):not([disabled])',
+    'textarea:not([disabled])',
+    'select:not([disabled])',
+    'button:not([disabled])'
+  ].join(',');
+
+  const elems = Array.from(container.querySelectorAll(selector)).filter(el => {
+    const style = window.getComputedStyle(el);
+    // solo elementos visibles y focusables
+    return style.display !== 'none' && style.visibility !== 'hidden' && el.tabIndex !== -1;
+  });
+  if (elems.length === 0) return;
+
+  const active = document.activeElement;
+  let idx = elems.indexOf(active);
+
+  // si no hay foco en la lista y la tecla es "siguiente", vamos al primero
+  if (idx === -1) {
+    if (['Enter', 'ArrowRight', 'ArrowDown'].includes(key)) {
+      elems[0].focus();
+      e.preventDefault();
+    }
+    return;
+  }
+
+  // preservar spinner nativo en number inputs salvo Alt
+  const isNumberInput = active.tagName === 'INPUT' && active.type === 'number';
+  if (isNumberInput && (key === 'ArrowUp' || key === 'ArrowDown') && !e.altKey) {
+    return;
+  }
+
+  let destIdx = idx;
+  if (['Enter', 'ArrowRight', 'ArrowDown'].includes(key)) destIdx = Math.min(elems.length - 1, idx + 1);
+  if (['ArrowLeft', 'ArrowUp'].includes(key)) destIdx = Math.max(0, idx - 1);
+
+  if (destIdx === idx) return;
+
+  e.preventDefault();
+  elems[destIdx].focus();
+}
+
+onMounted(async () => {
+  const necesitaNumero = !form.numero_descripcion_pieza || String(form.numero_descripcion_pieza).trim() === '';
+  const necesitaCuenta = !form.Cuenta_general || String(form.Cuenta_general).trim() === '';
+
+  // Si ya vienen ambos desde prefill, aplicamos y salimos
+  if (!necesitaNumero && !necesitaCuenta) {
+    if (serverPrefill.tipo_cambio) tipoCambio.value = Number(serverPrefill.tipo_cambio) || tipoCambio.value;
+    if (serverPrefill.moneda_gestion) form.moneda_gestion = serverPrefill.moneda_gestion;
+    if (serverPrefill.Cuenta_general) form.Cuenta_general = serverPrefill.Cuenta_general;
+    return;
+  }
+
+  loadingPrefill.value = true;
+  try {
+    const res = await axios.get(`/proyectos/${props.proyecto.id}/easy/last-prefill`, {
+      params: {
+        nombre: props.proyecto?.nombre ?? null,
+        descripcion: null
+      }
+    });
+
+    console.log('last-prefill response:', res?.data);
+    if (res?.data) {
+      const data = res.data;
+
+      // Guardar último completo
+      if (data.last_num_full) {
+        lastNumeroFull.value = data.last_num_full;
+        const p = parseNumeroPrefix(data.last_num_full);
+        lastNum.value = p.num !== null ? p.num : null;
+      } else if (data.last && typeof data.last === 'string') {
+        lastNumeroFull.value = data.last;
+        const p = parseNumeroPrefix(lastNumeroFull.value);
+        lastNum.value = p.num !== null ? p.num : null;
+      } else {
+        lastNumeroFull.value = '';
+        lastNum.value = null;
+      }
+
+      // aplicar next_numero si viene del servidor y no tenemos número en el form
+      if (typeof data.next_numero !== 'undefined' &&
+          (!form.numero_descripcion_pieza || String(form.numero_descripcion_pieza).trim() === '')) {
+
+        const descripcion =
+          (form.descripcion && String(form.descripcion).trim() !== '')
+            ? String(form.descripcion).trim()
+            : (serverPrefill.descripcion && String(serverPrefill.descripcion).trim() !== '')
+              ? String(serverPrefill.descripcion).trim()
+              : '';
+
+        form.numero_descripcion_pieza = descripcion
+          ? `${data.next_numero}-${descripcion}`
+          : `${data.next_numero}-`;
+
+        suggestedNextFull.value = form.numero_descripcion_pieza;
+      }
+
+      // last_cuenta
+      if (data.last_cuenta && (!form.Cuenta_general || String(form.Cuenta_general).trim() === '')) {
+        form.Cuenta_general = data.last_cuenta;
+      }
+
+      // aplicar prefs opcionales desde serverPrefill
+      if (serverPrefill.tipo_cambio) tipoCambio.value = Number(serverPrefill.tipo_cambio) || tipoCambio.value;
+      if (serverPrefill.moneda_gestion) form.moneda_gestion = serverPrefill.moneda_gestion;
+    }
+  } catch (err) {
+    console.error('Error cargando last-prefill:', err);
+  } finally {
+    loadingPrefill.value = false;
+  }
+});
 
 </script>
 
@@ -240,12 +491,10 @@ const guardarNormal = async () => {
           Crear registro — Inventario / Presupuesto <span class="text-sm text-gray-400">(EASY)</span>
         </h2>
 
-        <!-- Indicador si se está cargando prefill -->
         <div v-if="loadingPrefill" class="mb-4 text-sm text-gray-600 dark:text-gray-300">
           Cargando datos sugeridos... <span class="italic">(sugerencia de número / cuenta)</span>
         </div>
 
-        <!-- Cuenta general -->
         <div class="mb-4">
           <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
             Cuenta general
@@ -257,7 +506,8 @@ const guardarNormal = async () => {
           </p>
         </div>
 
-        <form @submit.prevent="guardarNormal" class="space-y-6">
+        <!-- Form con navegación por teclado: @keydown.capture y ref -->
+        <form @submit.prevent="guardarNormal" class="space-y-6" @keydown.capture="handleKeydown" ref="formEl">
           <!-- Monedas fijas -->
           <div class="grid grid-cols-2 gap-6">
             <div>
@@ -372,9 +622,18 @@ const guardarNormal = async () => {
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
               Número / descripción de la pieza
             </label>
-            <input v-model="form.numero_descripcion_pieza" type="text" aria-label="Número o descripción de la pieza"
-              placeholder="Ej: 397-Pract_inst..."
-              class="w-full mt-1 p-2 border rounded dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200" />
+
+            <div class="flex gap-3 items-center">
+              <input ref="numeroInputRef" v-model="form.numero_descripcion_pieza" @blur="handleNumeroBlur" type="text"
+                aria-label="Número o descripción de la pieza" placeholder="Ej: 397-Pract_inst..."
+                class="flex-1 mt-1 p-2 border rounded dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200" />
+
+              <div v-if="lastNumeroFull"
+                class="text-xs px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded text-gray-700 dark:text-gray-200">
+                Último: <strong class="ml-1">{{ lastNumeroFull }}</strong>
+              </div>
+            </div>
+
             <p v-if="errors.numero_descripcion_pieza" class="text-red-500 text-sm mt-1">
               {{ errors.numero_descripcion_pieza }}
             </p>
@@ -389,7 +648,7 @@ const guardarNormal = async () => {
               <input v-model="form.codigo_presupuestario" type="text" aria-label="Código presupuestario"
                 class="w-full mt-1 p-2 border rounded dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200" />
               <p v-if="errors.codigo_presupuestario" class="text-red-500 text-sm mt-1">{{ errors.codigo_presupuestario
-              }}</p>
+                }}</p>
             </div>
 
             <div>
@@ -416,30 +675,32 @@ const guardarNormal = async () => {
               <div class="flex-1">
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
                   Bailleur de fondos
-                  <!-- Icono de info con tooltip (no mueve nada) -->
-                  <span class="ml-2 inline-block align-middle cursor-default text-gray-500 dark:text-gray-400" title="RAF-WILDER:
-                      1 = fonds propres IDP
-                      2 = Union européenne
-                      3 = DGD
-                      4 = MAE Lux
-                      5 = FBSA
-                      6 = A REPARTIR" tabindex="0" role="img"
-                    aria-label="Información sobre códigos RAF-WILDER: 1=fonds propres IDP, 2=Union européenne, 3=DGD, 4=MAE Lux, 5=FBSA, 6=A REPARTIR">
+                  <span
+                    class="ml-2 inline-block align-middle cursor-default text-gray-500 dark:text-gray-400"
+                    title="RAF-WILDER: 1 = fonds propres IDP, 2 = Union européenne, 3 = DGD, 4 = MAE Lux, 5 = FBSA, 6 = A REPARTIR"
+                    tabindex="0"
+                    role="img"
+                    aria-label="Información sobre códigos RAF-WILDER"
+                  >
                     ℹ️
                   </span>
                 </label>
 
-                <input v-model="form.bailleur_fondos" type="text" aria-label="Bailleur de fondos" 
-                  class="w-full mt-1 p-2 border rounded dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200" />
+                <input
+                  v-model="bailleurCodigo"
+                  type="text"
+                  aria-label="Bailleur de fondos"
+                  class="w-full mt-1 p-2 border rounded dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200"
+                />
               </div>
 
-              <!-- cuadro condicional que aparece cuando bailleur_fondos tiene valor -->
-              <div v-if="showBailleurBox"
-                class="mt-6 px-3 py-2 text-sm border rounded bg-gray-50 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200">
-                1 union 2 fondos
+              <div
+                v-if="bailleurNombre"
+                class="mt-6 px-3 py-2 text-sm border rounded bg-gray-50 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200"
+              >
+                {{ bailleurNombre }}
               </div>
             </div>
-
           </div>
 
           <!-- Acciones -->
@@ -456,6 +717,10 @@ const guardarNormal = async () => {
               class="px-5 py-2 border rounded-lg dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition">
               Limpiar
             </button>
+
+            <div class="flex items-center justify-between gap-2">
+              <button type="button" @click="volverATabla" class="px-4 py-2 border rounded">Volver</button>
+            </div>
           </div>
         </form>
       </div>
@@ -463,11 +728,16 @@ const guardarNormal = async () => {
   </AuthenticatedLayout>
 </template>
 
-
 <style scoped>
 input[type="number"]::-webkit-outer-spin-button,
 input[type="number"]::-webkit-inner-spin-button {
   -webkit-appearance: none;
   margin: 0;
+}
+
+/* realce del foco para navegación con teclado */
+input:focus, textarea:focus, select:focus, button:focus {
+  outline: 2px solid rgba(37,99,235,0.6);
+  outline-offset: 2px;
 }
 </style>
