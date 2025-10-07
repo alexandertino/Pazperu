@@ -317,7 +317,7 @@ function actaPdf_escapeHtml(unsafe) {
     .replaceAll("'", '&#039;');
 }
 const html = actaPdf2_generateActaHTML({
-  logoData: '/images/logo.png'  
+  logoData: '/images/logo.png'
 });
 
 function actaPdf2_generateActaHTML({ nActa, nombre, lugar, distrito, fecha, items, proyectoNombre, logoData = null }) {
@@ -361,39 +361,44 @@ function actaPdf2_generateActaHTML({ nActa, nombre, lugar, distrito, fecha, item
     @media print{body{padding:0}.paper{box-shadow:none;border:none}@page{size:A4;margin:10mm}.doc-table{font-size:10px}.doc-table th,.doc-table td{padding:4px 6px}}
   `;
 
-  const introText = `En la localidad de <strong>${actaPdf_escapeHtml(lugar)}</strong>, distrito de <strong>${actaPdf_escapeHtml(distrito)}</strong>, siendo las <strong>.............</strong> horas del día <strong>${actaPdf_escapeHtml(fecha)}</strong>, se hace entrega a <strong>${actaPdf_escapeHtml(nombre)}</strong> lo que se detalla en líneas:`;
+  const introText = `En la localidad de <strong>${actaPdf_escapeHtml(lugar)}</strong>, distrito de <strong>${actaPdf_escapeHtml(distrito)}</strong>, siendo las <strong>.............</strong> horas del día <strong>06 de octubre de 2025</strong>, se procede a la entrega y recepción de materiales/implementos al Sr (a) <strong>${actaPdf_escapeHtml(nombre)}</strong>, los cuales se detallan en la siguiente relación, en el marco de las actividades del proyecto antes mencionado.`;
+
 
   const checksHtml = `
-    <div class="checkboxes">
-      <p style="margin-top:10px">Posteriores y en los términos siguientes:</p>
-      <ul>
-        <li>Será utilizado únicamente en los trabajos del proyecto.</li>
-        <li>Responsabilidad del uso adecuado de lo recibido.</li>
-        <li>Uso para promotoría/asesoría/capacitación cuando aplique.</li>
-      </ul>
+  <div style="font-family: Arial, sans-serif; font-size:13px; line-height:1.5; margin-top:10px; max-width:700px;">
+    <p>Los bienes entregados serán utilizados únicamente para los fines y actividades del proyecto, bajo responsabilidad del receptor, quien se compromete a hacer un uso adecuado y responsable de los mismos.</p>
+    <p>Asimismo, el material podrá ser empleado en acciones de promotoría, asesoría, capacitación, actividades comunitarias y para actividades operativas del personal, según corresponda.</p>
+  </div>
+  `;
+
+
+  const Htmlmarca = `
+    <div style="font-family: Arial, sans-serif; font-size:13px; margin-top:12px; max-width:700px;">
+      <p>Marque con una “X” la opción correspondiente:</p>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <div>La entrega - recepción es a título personal/familiar.</div>
+        <div style="width:18px; height:18px; border:2px solid #2a4d9b; text-align:center; line-height:14px; display:flex; align-items:center; justify-content:center;">&nbsp;</div>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <div>La entrega - recepción es para uso de varias familias y/o comunidad.</div>
+        <div style="width:18px; height:18px; border:2px solid #2a4d9b; display:flex; align-items:center; justify-content:center;"></div>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <div>La entrega - recepción es para la realización de trabajos en promotoría / asesoría / capacitación.</div>
+        <div style="width:18px; height:18px; border:2px solid #2a4d9b; display:flex; align-items:center; justify-content:center;"></div>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div>La entrega - recepción es para actividades operativas del personal.</div>
+        <div style="width:18px; height:18px; border:2px solid #2a4d9b; display:flex; align-items:center; justify-content:center;"></div>
+      </div>
     </div>
   `;
-  const Htmlmarca = `
-  <div style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.8; max-width: 600px; margin-top:10px">
-  <p>Y considerando lo siguiente, marque con una X lo que corresponda:</p>
 
-  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-    <span>La entrega - recepción es a título personal/familiar</span>
-    <div style="width: 18px; height: 18px; border: 2px solid #2a4d9b; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;"></div>
-  </div>
 
-  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-    <span>La entrega - recepción es para varias familias y/o como comunidad</span>
-    <div style="width: 18px; height: 18px; border: 2px solid #2a4d9b;"></div>
-  </div>
-
-  <div style="display: flex; justify-content: space-between; align-items: center;">
-    <span>La entrega - recepción es para realizar trabajos en promotoría / asesoría / capacitación</span>
-    <div style="width: 18px; height: 18px; border: 2px solid #2a4d9b;"></div>
-  </div>
-</div>
-
-  `;
 
   return `<!doctype html>
   <html lang="es">
@@ -442,9 +447,9 @@ function actaPdf2_generateActaHTML({ nActa, nombre, lugar, distrito, fecha, item
         </tbody>
       </table>
 
-      <div class="smallnote">En señal de conformidad de entrega y recepción, firman todos los presentes.</div>
+      <div class="smallnote">En señal de conformidad con la entrega y recepción de los bienes antes descritos, firman los presentes:</div>
 
-      <div class="sign-row">
+      <div class="sign-row" style="margin-top: 80px;">
         <div class="sign-box" id="sign-entrego-box">
           <div class="sign-line"></div>
           <div class="sign-meta"><strong>ENTREGÓ CONFORME</strong></div>
@@ -578,13 +583,13 @@ async function actaPdf2_downloadPdfFile() {
       setTimeout(() => { if (!window.html2pdf) reject(new Error('Timeout cargando html2pdf')); }, 10000);
     });
   })();
-
   try {
     // escala alta para más nitidez. Si falla por memoria reduce a 2.
     const scale = 3; // <- subir para mayor nitidez (2-3). OJO memoria.
+    const filename = `${String(nActaValue).replace(/[\\\/:*?"<>|]/g, '_')}.pdf`;
     const opt = {
       margin: 8,
-      filename: `${String(nActaValue).replace(/[\\\/:*?"<>|]/g, '_')}.pdf`,
+      filename,
       image: { type: 'jpeg', quality: 0.98 },
       html2canvas: {
         scale,
@@ -593,7 +598,6 @@ async function actaPdf2_downloadPdfFile() {
         logging: false,
         width: a4WidthPx,
         windowWidth: a4WidthPx,
-        // algunas versiones aceptan 'dpi'
         dpi: 300
       },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
@@ -604,7 +608,7 @@ async function actaPdf2_downloadPdfFile() {
     await new Promise((resolve, reject) => {
       try {
         window.html2pdf().set(opt).from(elementToPdf).toPdf().get('pdf').then(() => {
-          window.html2pdf().set(opt).from(elementToPdf).save(() => resolve());
+          window.html2pdf().set(opt).from(elementToPdf).save(filename, () => resolve());
         }).catch(err => reject(err));
       } catch (err) {
         reject(err);
