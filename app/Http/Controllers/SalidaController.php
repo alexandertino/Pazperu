@@ -228,10 +228,8 @@ class SalidaController extends Controller
         ]);
     }
 
-    public function update(Request $request, $proyectoId, $id){
-        // Primero obtengo el proyecto y construyo nombres de tablas,
-        // porque los necesito tanto para la actualización parcial (estado)
-        // como para la actualización completa.
+    public function update(Request $request, $proyectoId, $id)
+    {
         $proyecto = Proyecto::findOrFail($proyectoId);
         $tablaSalidas = 'salidas_proyecto_' . Str::of($proyecto->nombre)->lower()->replace(' ', '_');
         $tablaInventario = 'inventario_proyecto_' . Str::of($proyecto->nombre)->lower()->replace(' ', '_');
@@ -255,7 +253,7 @@ class SalidaController extends Controller
      * RAMA ESPECIAL: si la request sólo quiere actualizar 'estado'
      * hacemos una validación mínima y actualizamos únicamente ese campo.
      */
-        if ($request->has('estado') && $request->only('estado') === $request->all()) {
+        if ($request->has('estado') && count($request->all()) === 1) {
             // Validar solo estado
             $validatorEstado = \Illuminate\Support\Facades\Validator::make($request->only('estado'), [
                 'estado' => 'required|in:pendiente,aceptado',
@@ -730,7 +728,7 @@ class SalidaController extends Controller
         return response()->download($path);
     }
 
-    public function productosProyecto(Proyecto $proyecto)
+    public function productosProyecto(Request $request, Proyecto $proyecto)
     {
         $tablaInventario = 'inventario_proyecto_' . Str::of($proyecto->nombre)->lower()->replace(' ', '_');
 
@@ -738,19 +736,116 @@ class SalidaController extends Controller
             return response()->json([], 200);
         }
 
-        $select = [];
-        if (Schema::hasColumn($tablaInventario, 'codigo')) $select[] = 'codigo';
-        if (Schema::hasColumn($tablaInventario, 'descripcion')) $select[] = 'descripcion';
-        if (Schema::hasColumn($tablaInventario, 'producto')) $select[] = 'producto';
-        if (Schema::hasColumn($tablaInventario, 'um')) $select[] = 'um';
-        if (Schema::hasColumn($tablaInventario, 'stock')) $select[] = 'stock';
-        if (Schema::hasColumn($tablaInventario, 'id')) $select[] = 'id';
+        $possibleColumns = [
+            'codigo' => 'codigo',
+            'descripcion' => 'descripcion',
+            'producto' => 'producto',
+            'unidad_medida' => 'unidad_medida',
+            'stock' => 'stock',
+            'id' => 'id',
+            'solicitado_por' => 'solicitado_por',
+            'solicitante' => 'solicitante',
+            'requested_by' => 'requested_by',
+            'categoria' => 'categoria',
+            'categoria_id' => 'categoria_id',
+            'category' => 'category',
+        ];
 
-        if (empty($select)) {
-            return response()->json([], 200);
+        $select = [];
+        foreach ($possibleColumns as $col) {
+            if (Schema::hasColumn($tablaInventario, $col)) {
+                $select[] = $col;
+            }
         }
 
-        $rows = DB::table($tablaInventario)->select($select)->get();
+        if (empty($select)) return response()->json([], 200);
+
+        // filtros
+        $q = $request->query('q', null);
+        $solicitadoPor = $request->query('solicitado_por', null);
+        $categoria = $request->query('categoria', null);
+        $minStock = $request->query('minStock', null);
+        $onlyAvailable = filter_var($request->query('onlyAvailable', 'true'), FILTER_VALIDATE_BOOLEAN);
+        $sortBy = $request->query('sortBy', 'producto');
+        $limit = (int) $request->query('limit', 200);
+        $meta = filter_var($request->query('meta', 'false'), FILTER_VALIDATE_BOOLEAN);
+
+        $qb = DB::table($tablaInventario)->select($select);
+
+        // Búsqueda libre: usamos LOWER(...) y CAST(... AS CHAR) para compatibilidad MySQL
+        if ($q) {
+            $qClean = trim($q);
+            $like = '%' . mb_strtolower($qClean) . '%';
+
+            $qb->where(function ($inner) use ($like, $select) {
+                if (in_array('producto', $select)) {
+                    $inner->orWhereRaw('LOWER(producto) LIKE ?', [$like]);
+                }
+                if (in_array('descripcion', $select)) {
+                    $inner->orWhereRaw('LOWER(descripcion) LIKE ?', [$like]);
+                }
+                if (in_array('codigo', $select)) {
+                    // si codigo puede ser numérico, casteamos a CHAR para MySQL
+                    $inner->orWhereRaw('LOWER(CAST(codigo AS CHAR)) LIKE ?', [$like]);
+                }
+                if (in_array('solicitado_por', $select)) {
+                    $inner->orWhereRaw('LOWER(solicitado_por) LIKE ?', [$like]);
+                }
+                if (in_array('categoria', $select)) {
+                    $inner->orWhereRaw('LOWER(CAST(categoria AS CHAR)) LIKE ?', [$like]);
+                }
+                if (in_array('requested_by', $select)) {
+                    $inner->orWhereRaw('LOWER(requested_by) LIKE ?', [$like]);
+                }
+                if (in_array('solicitante', $select)) {
+                    $inner->orWhereRaw('LOWER(solicitante) LIKE ?', [$like]);
+                }
+                if (in_array('category', $select)) {
+                    $inner->orWhereRaw('LOWER(category) LIKE ?', [$like]);
+                }
+            });
+        }
+
+        // filtros específicos (solicitado_por)
+        if ($solicitadoPor) {
+            $val = '%' . mb_strtolower($solicitadoPor) . '%';
+            $qb->where(function ($w) use ($val, $select) {
+                if (in_array('solicitado_por', $select)) $w->orWhereRaw('LOWER(solicitado_por) LIKE ?', [$val]);
+                if (in_array('requested_by', $select)) $w->orWhereRaw('LOWER(requested_by) LIKE ?', [$val]);
+                if (in_array('solicitante', $select)) $w->orWhereRaw('LOWER(solicitante) LIKE ?', [$val]);
+            });
+        }
+
+        // filtros específicos (categoria)
+        if ($categoria) {
+            $val = '%' . mb_strtolower($categoria) . '%';
+            $qb->where(function ($w) use ($val, $select) {
+                if (in_array('categoria', $select)) $w->orWhereRaw('LOWER(CAST(categoria AS CHAR)) LIKE ?', [$val]);
+                if (in_array('categoria_id', $select)) $w->orWhereRaw('LOWER(CAST(categoria_id AS CHAR)) LIKE ?', [$val]);
+                if (in_array('category', $select)) $w->orWhereRaw('LOWER(category) LIKE ?', [$val]);
+            });
+        }
+
+        if (!is_null($minStock) && is_numeric($minStock)) {
+            $qb->where('stock', '>=', (float)$minStock);
+        }
+
+        if ($onlyAvailable) {
+            $qb->where(function ($w) {
+                $w->whereNull('stock')->orWhere('stock', '>', 0);
+            });
+        }
+
+        $allowedSort = ['producto', 'codigo', 'categoria'];
+        if (!in_array($sortBy, $allowedSort)) $sortBy = 'producto';
+        $realSort = in_array($sortBy, $select) ? $sortBy : (in_array('producto', $select) ? 'producto' : $select[0]);
+
+        $qb->orderBy($realSort, 'asc');
+
+        if ($limit > 0 && $limit <= 2000) $qb->limit($limit);
+        else $qb->limit(1000);
+
+        $rows = $qb->get();
 
         $normalized = $rows->map(function ($r) {
             $r = (array) $r;
@@ -758,14 +853,29 @@ class SalidaController extends Controller
                 'code' => $r['codigo'] ?? $r['id'] ?? null,
                 'producto' => $r['producto'] ?? $r['descripcion'] ?? null,
                 'descripcion' => $r['descripcion'] ?? $r['producto'] ?? null,
-                'um' => $r['um'] ?? null,
+                'unidad_medida' => $r['unidad_medida'] ?? null,
                 'stock' => isset($r['stock']) ? (float)$r['stock'] : null,
+                'solicitado_por' => $r['solicitado_por'] ?? $r['solicitante'] ?? $r['requested_by'] ?? null,
+                'categoria' => $r['categoria'] ?? $r['categoria_id'] ?? $r['category'] ?? null,
                 'id' => $r['id'] ?? null,
                 'raw' => $r,
             ];
         });
 
-        return response()->json($normalized->values()->all(), 200);
+        if ($meta) {
+            $categorias = $normalized->pluck('categoria')->filter()->unique()->values();
+            $solicitantes = $normalized->pluck('solicitado_por')->filter()->unique()->values();
+            return response()->json([
+                'data' => $normalized,
+                'meta' => [
+                    'categorias' => $categorias,
+                    'solicitantes' => $solicitantes,
+                    'count' => $normalized->count(),
+                ],
+            ], 200);
+        }
+
+        return response()->json($normalized, 200);
     }
 
     public function importarSalidas(Request $request, Proyecto $proyecto)
@@ -857,6 +967,19 @@ class SalidaController extends Controller
 
         $salidas = $query->orderBy('fecha', 'asc')->get();
         return response()->json($salidas);
+    }
+    public function ultimoCodigo()
+    {
+        $ultimo = \App\Models\Salida::orderBy('id', 'desc')->first();
+        
+        $numero = 1; // Valor por defecto si no hay registros aún
+
+        if ($ultimo && $ultimo->codigo1) {
+            // Si existe, incrementa el número
+            $numero = intval($ultimo->codigo1) + 1;
+        }
+
+        return response()->json(['siguiente' => $numero]);
     }
 
     private function toLogSafe($value)

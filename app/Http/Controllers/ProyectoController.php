@@ -56,6 +56,7 @@ class ProyectoController extends Controller
             Schema::create($tableSalidas, function (Blueprint $table) {
                 $table->id();
                 $table->string('n_acta')->index();
+                $table->string('nombre_encargado', 100);
                 $table->unsignedBigInteger('persona_id')->nullable()->index();
                 $table->string('nombre')->nullable();
                 $table->string('lugar')->nullable();

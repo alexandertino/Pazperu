@@ -470,7 +470,8 @@ const submitButtonLabel = computed(() => {
                 <div class="text-sm text-gray-600">Caja — <strong>C</strong></div>
                 <div class="text-lg font-medium">{{ metas.c.last_n_acta || '—' }}</div>
                 <div class="text-xs text-gray-500">Siguiente: <strong>{{ metas.c.next_n_acta || '—' }}</strong></div>
-                <div class="text-xs text-gray-500">Saldo anterior: <strong>{{ formatCurrency(metas.c.previous_saldo) }}</strong></div>
+                <div class="text-xs text-gray-500">Saldo anterior: <strong>{{ formatCurrency(metas.c.previous_saldo)
+                    }}</strong></div>
               </div>
               <div class="flex flex-col gap-2">
                 <button @click="useSuggested('c')" type="button"
@@ -487,7 +488,8 @@ const submitButtonLabel = computed(() => {
                 <div class="text-sm text-gray-600">Banco — <strong>B</strong></div>
                 <div class="text-lg font-medium">{{ metas.b.last_n_acta || '—' }}</div>
                 <div class="text-xs text-gray-500">Siguiente: <strong>{{ metas.b.next_n_acta || '—' }}</strong></div>
-                <div class="text-xs text-gray-500">Saldo anterior: <strong>{{ formatCurrency(metas.b.previous_saldo) }}</strong></div>
+                <div class="text-xs text-gray-500">Saldo anterior: <strong>{{ formatCurrency(metas.b.previous_saldo)
+                    }}</strong></div>
               </div>
               <div class="flex flex-col gap-2">
                 <button @click="useSuggested('b')" type="button"
@@ -544,14 +546,28 @@ const submitButtonLabel = computed(() => {
 
             <div>
               <label class="block text-sm font-medium dark:text-white">Ingresos</label>
-              <input v-model="form.ingresos" type="number" step="0.01" min="0" :disabled="isIngresosDisabled"
-                class="mt-1 w-full p-2 border rounded dark:text-white dark:bg-gray-700" />
+              <input v-model="form.ingresos" type="number" step="0.01" min="0" :disabled="isIngresosDisabled" :class="[
+                'mt-1 w-full p-2 border rounded',
+                'dark:text-white',
+                isIngresosDisabled ? 'disabled-input' : 'dark:bg-gray-700'
+              ]" />
+              <p v-if="errors.ingresos" class="text-red-500 text-sm mt-1">{{ errors.ingresos }}</p>
+              <p v-else-if="isIngresosDisabled" class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Bloqueado porque existe un egreso distinto de 0. Ponga 0 en Egresos para editar.
+              </p>
             </div>
 
             <div>
               <label class="block text-sm font-medium dark:text-white">Egresos</label>
-              <input v-model="form.egresos" type="number" step="0.01" min="0" :disabled="isEgresosDisabled"
-                class="mt-1 w-full p-2 border rounded dark:text-white dark:bg-gray-700" />
+              <input v-model="form.egresos" type="number" step="0.01" min="0" :disabled="isEgresosDisabled" :class="[
+                'mt-1 w-full p-2 border rounded',
+                'dark:text-white',
+                isEgresosDisabled ? 'disabled-input' : 'dark:bg-gray-700'
+              ]" />
+              <p v-if="errors.egresos" class="text-red-500 text-sm mt-1">{{ errors.egresos }}</p>
+              <p v-else-if="isEgresosDisabled" class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Bloqueado porque existe un ingreso distinto de 0. Ponga 0 en Ingresos para editar.
+              </p>
             </div>
 
             <div>
@@ -594,8 +610,8 @@ const submitButtonLabel = computed(() => {
 
               <!-- Botones -->
               <div class="flex items-center justify-between gap-2">
-                <button type="button" @click="volverATabla" class="px-4 py-2 border rounded">Volver</button>
-                <button :disabled="submitting" type="submit" class="px-4 py-2 bg-blue-600 text-white rounded">
+                <button type="button" @click="volverATabla" class="px-4 py-2 bg-gray-400 rounded dark:bg-gray-600 dark:text-white">Volver</button>
+                <button :disabled="submitting" type="submit" class="px-4 py-2 bg-blue-600 text-white  rounded">
                   {{ submitButtonLabel }}
                 </button>
               </div>
@@ -619,8 +635,27 @@ const submitButtonLabel = computed(() => {
 
 <style scoped>
 /* opcional: destacar el elemento enfocado para mejor UX de navegación con teclado */
-input:focus, textarea:focus, select:focus, button:focus {
-  outline: 2px solid rgba(37,99,235,0.6);
+input:focus,
+textarea:focus,
+select:focus,
+button:focus {
+  outline: 2px solid rgba(37, 99, 235, 0.6);
   outline-offset: 2px;
+}
+
+.disabled-input {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background-color: #f3f4f6;
+  pointer-events: none;
+  color: rgba(0, 0, 0, 0.6);
+  border-color: #e5e7eb;
+}
+
+:deep(.dark) .disabled-input,
+.dark .disabled-input {
+  background-color: #111827;
+  color: rgba(255, 255, 255, 0.7);
+  border-color: #374151;
 }
 </style>

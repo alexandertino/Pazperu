@@ -218,18 +218,6 @@ onMounted(async () => {
     // seleccionar primer elemento por defecto si no hay valor en el form
     const firstNonEmpty = (arr) => (Array.isArray(arr) && arr.length ? arr.find(x => String(x.nombre || '').trim() !== '') : null);
 
-    if (!form.categoria) {
-        const first = firstNonEmpty(categorias.value);
-        if (first) seleccionarCategoria(first.nombre);
-    }
-    if (!form.unidad_medida) {
-        const firstU = firstNonEmpty(unidades.value);
-        if (firstU) seleccionarUnidades(firstU.nombre);
-    }
-    if (!form.solicitado_por) {
-        const firstS = firstNonEmpty(solicitantes.value);
-        if (firstS) seleccionarSolicitantes(firstS.nombre);
-    }
 });
 
 const mostrarComentario = ref(false);
@@ -863,7 +851,7 @@ const handleComboKey = (event, tipo) => {
                     <label class="block font-bold mb-1 dark:text-gray-200">Solicitado por</label>
 
                     <!-- Input -->
-                    <input v-model="searchSolicitantes" type="text"
+                    <input v-model="searchSolicitantes" type="text" 
                         class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white focusable"
                         @focus="mostrarSolicitantes = true" @input="mostrarSolicitantes = true"
                         @focusout="onComboFocusOut($event, 'solicitantes')"

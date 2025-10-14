@@ -15,14 +15,25 @@ class InventarioMetaController extends Controller
 
         $map = [
             'categorias' => 'categorias',
+            'categoria' => 'categorias',
+
             'unidadmedida' => 'unidades_medida',
             'unidad_medida' => 'unidades_medida',
             'unidad-medida' => 'unidades_medida',
             'unidad' => 'unidades_medida',
+            'unidadmedidas' => 'unidades_medida',
+
             'solicitantes' => 'solicitantes',
             'solicitante' => 'solicitantes',
+
             'personas' => 'personas',
             'persona' => 'personas',
+
+            'proyectos' => 'proyectos',
+            'proyecto' => 'proyectos',
+
+            'usuarios' => 'users', // nuevo mapeo
+            'usuario' => 'users',
         ];
 
         return $map[$t] ?? null;
@@ -33,14 +44,26 @@ class InventarioMetaController extends Controller
         $categorias = DB::table('categorias')->select('id', 'nombre')->orderBy('nombre')->get();
         $unidadMedida = DB::table('unidades_medida')->select('id', 'nombre')->orderBy('nombre')->get();
         $solicitantes = DB::table('solicitantes')->select('id', 'nombre')->orderBy('nombre')->get();
-        // Traer también lugar y distrito para personas
         $personas = DB::table('personas')->select('id', 'nombre', 'lugar', 'distrito')->orderBy('nombre')->get();
+
+        $proyectos = DB::table('proyectos')
+            ->select('id', 'nombre', 'estado', 'descripcion', 'fecha_inicio', 'fecha_fin')
+            ->orderBy('nombre')
+            ->get();
+
+        // Usuarios: sólo exponer id, name, email y role (no password ni email_verified_at)
+        $usuarios = DB::table('users')
+            ->select('id', 'name', 'email', 'role')
+            ->orderBy('name')
+            ->get();
 
         return Inertia::render('Inventarios/MetaManager', [
             'categorias' => $categorias,
             'UnidadMedida' => $unidadMedida,
             'solicitantes' => $solicitantes,
             'personas' => $personas,
+            'proyectos' => $proyectos,
+            'usuarios' => $usuarios, // enviar usuarios al frontend
         ]);
     }
 
@@ -51,11 +74,23 @@ class InventarioMetaController extends Controller
         $solicitantes = DB::table('solicitantes')->select('id', 'nombre')->orderBy('nombre')->get();
         $personas = DB::table('personas')->select('id', 'nombre', 'lugar', 'distrito')->orderBy('nombre')->get();
 
+        $proyectos = DB::table('proyectos')
+            ->select('id', 'nombre', 'estado', 'descripcion', 'fecha_inicio', 'fecha_fin')
+            ->orderBy('nombre')
+            ->get();
+
+        $usuarios = DB::table('users')
+            ->select('id', 'name', 'email', 'role')
+            ->orderBy('name')
+            ->get();
+
         return response()->json([
             'categorias' => $categorias,
             'UnidadMedida' => $unidadMedida,
             'solicitantes' => $solicitantes,
             'personas' => $personas,
+            'proyectos' => $proyectos,
+            'usuarios' => $usuarios, // incluido en el JSON
         ]);
     }
 
@@ -67,7 +102,12 @@ class InventarioMetaController extends Controller
             return response()->json(['message' => 'Tipo inválido'], 422);
         }
 
-        // Validaciones por tipo
+        // No permitimos crear usuarios desde aquí (gestión de usuarios por separado)
+        if ($table === 'users') {
+            return response()->json(['message' => 'Creación de usuarios no está permitida desde este endpoint'], 403);
+        }
+
+        // Personas
         if ($table === 'personas') {
             $request->validate([
                 'nombre' => ['required', 'string', 'max:255'],
@@ -88,6 +128,34 @@ class InventarioMetaController extends Controller
             return response()->json([
                 'id' => $id,
                 'persona' => $row
+            ], 201);
+        }
+
+        // Proyectos
+        if ($table === 'proyectos') {
+            $request->validate([
+                'nombre' => ['required', 'string', 'max:255'],
+                'estado' => ['nullable', 'string', 'max:50'],
+                'descripcion' => ['nullable', 'string'],
+                'fecha_inicio' => ['nullable', 'date'],
+                'fecha_fin' => ['nullable', 'date'],
+            ]);
+
+            $id = DB::table('proyectos')->insertGetId([
+                'nombre' => $request->input('nombre'),
+                'estado' => $request->input('estado') ?? null,
+                'descripcion' => $request->input('descripcion') ?? null,
+                'fecha_inicio' => $request->input('fecha_inicio') ?? null,
+                'fecha_fin' => $request->input('fecha_fin') ?? null,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            $row = DB::table('proyectos')->where('id', $id)->first();
+
+            return response()->json([
+                'id' => $id,
+                'proyecto' => $row
             ], 201);
         }
 
@@ -136,7 +204,44 @@ class InventarioMetaController extends Controller
             return response()->json(['id' => $id, 'persona' => $row]);
         }
 
-        // default para otras tablas
+        if ($table === 'proyectos') {
+            $request->validate([
+                'nombre' => ['required', 'string', 'max:255'],
+                'estado' => ['nullable', 'string', 'max:50'],
+                'descripcion' => ['nullable', 'string'],
+                'fecha_inicio' => ['nullable', 'date'],
+                'fecha_fin' => ['nullable', 'date'],
+            ]);
+
+            DB::table('proyectos')->where('id', $id)->update([
+                'nombre' => $request->input('nombre'),
+                'estado' => $request->input('estado') ?? null,
+                'descripcion' => $request->input('descripcion') ?? null,
+                'fecha_inicio' => $request->input('fecha_inicio') ?? null,
+                'fecha_fin' => $request->input('fecha_fin') ?? null,
+                'updated_at' => now(),
+            ]);
+
+            $row = DB::table('proyectos')->where('id', $id)->first();
+            return response()->json(['id' => $id, 'proyecto' => $row]);
+        }
+
+        if ($table === 'users') {
+            // solo permitimos actualizar el role desde este endpoint
+            $request->validate([
+                'role' => ['nullable', 'string', 'max:100'],
+            ]);
+
+            DB::table('users')->where('id', $id)->update([
+                'role' => $request->input('role'),
+                'updated_at' => now(),
+            ]);
+
+            $row = DB::table('users')->select('id', 'name', 'email', 'role')->where('id', $id)->first();
+            return response()->json(['id' => $id, 'usuario' => $row]);
+        }
+
+        // default para otras tablas (nombre)
         $request->validate([
             'nombre' => ['required', 'string', 'max:255'],
         ]);
@@ -158,6 +263,12 @@ class InventarioMetaController extends Controller
         $exists = DB::table($table)->where('id', $id)->exists();
         if (!$exists) return response()->json(['message' => 'No encontrado'], 404);
 
+        // Si quieres prevenir borrado de usuarios desde aquí, puedes bloquearlo:
+        if ($table === 'users') {
+            // return response()->json(['message' => 'No permitido eliminar usuarios desde este endpoint'], 403);
+            // Si permites borrar usuarios coméntalo o implementa autorización.
+        }
+
         DB::table($table)->where('id', $id)->delete();
 
         return response()->json(['deleted' => true]);
@@ -169,6 +280,7 @@ class InventarioMetaController extends Controller
             'categorias' => [],
             'unidades_medida' => [],
             'solicitantes' => [],
+            'proyectos' => [],
         ];
 
         DB::beginTransaction();
@@ -273,6 +385,45 @@ class InventarioMetaController extends Controller
                 $inserted['solicitantes'][] = ['id' => $row->id, 'nombre' => $row->nombre, 'skipped' => false];
             }
 
+            // --- Proyectos (ejemplos iniciales) ---
+            $proyectos = [
+                [
+                    'nombre' => 'Proyecto Piloto A',
+                    'estado' => 'activo',
+                    'descripcion' => 'Piloto en zona norte para evaluación de procesos',
+                    'fecha_inicio' => now()->toDateString(),
+                    'fecha_fin' => now()->addMonths(3)->toDateString(),
+                ],
+                [
+                    'nombre' => 'Campaña de Difusión 2025',
+                    'estado' => 'pendiente',
+                    'descripcion' => 'Materiales y actividades de difusión para el próximo semestre',
+                    'fecha_inicio' => null,
+                    'fecha_fin' => null,
+                ],
+            ];
+
+            foreach ($proyectos as $p) {
+                $nombreTrim = trim($p['nombre']);
+                $existing = DB::table('proyectos')->where('nombre', $nombreTrim)->first();
+                if ($existing) {
+                    $inserted['proyectos'][] = ['id' => $existing->id, 'nombre' => $existing->nombre, 'skipped' => true];
+                    continue;
+                }
+
+                $id = DB::table('proyectos')->insertGetId([
+                    'nombre' => $nombreTrim,
+                    'estado' => $p['estado'] ?? null,
+                    'descripcion' => $p['descripcion'] ?? null,
+                    'fecha_inicio' => $p['fecha_inicio'] ?? null,
+                    'fecha_fin' => $p['fecha_fin'] ?? null,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+                $row = DB::table('proyectos')->where('id', $id)->first();
+                $inserted['proyectos'][] = ['id' => $row->id, 'nombre' => $row->nombre, 'skipped' => false];
+            }
+
             DB::commit();
 
             return response()->json([
@@ -282,7 +433,6 @@ class InventarioMetaController extends Controller
             ], 201);
         } catch (\Exception $e) {
             DB::rollBack();
-            // opcional: Log::error('insertInitialData error: '.$e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Error al insertar datos iniciales.',

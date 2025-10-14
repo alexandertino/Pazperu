@@ -5,7 +5,7 @@
         Editar Caja — ID: {{ acta.id }}
       </h2>
 
-      <form @submit.prevent="submit" class="grid grid-cols-1 gap-4">
+      <form @submit.prevent="confirmSubmit" class="grid grid-cols-1 gap-4">
         <div>
           <label class="block text-sm font-medium dark:text-white">N° Acta</label>
           <input v-model="form.n_acta" type="text" maxlength="50" class="mt-1 w-full p-2 border rounded" />
@@ -37,7 +37,7 @@
         </div>
 
         <div class="mt-4 flex justify-end gap-2">
-          <button type="button" @click="volver" class="px-4 py-2 border rounded">Cancelar</button>
+          <button type="button" @click="volver" class="px-4 py-2 border rounded">Volver</button>
           <button :disabled="form.processing" type="submit" class="px-4 py-2 bg-blue-600 text-white rounded">
             {{ form.processing ? 'Guardando...' : 'Guardar' }}
           </button>
@@ -51,15 +51,16 @@
 </template>
 
 <script setup>
-import { computed } from 'vue';
-import { useForm, usePage } from '@inertiajs/vue3';
-import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
+import { computed } from 'vue'
+import { useForm, usePage } from '@inertiajs/vue3'
+import Swal from 'sweetalert2'
+import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 
 const props = defineProps({
   proyecto: Object,
   acta: Object,
   tabla: String,
-});
+})
 
 const form = useForm({
   n_acta:         props.acta?.n_acta ?? '',
@@ -67,17 +68,34 @@ const form = useForm({
   descripcion:    props.acta?.descripcion ?? '',
   presupuestario: props.acta?.presupuestario ?? '',
   actividad:      props.acta?.actividad ?? 'A.',
-});
+})
 
-const page = usePage();
-const flashSuccess = computed(() => page.props.value?.flash?.success ?? null);
-const flashError   = computed(() => page.props.value?.flash?.error ?? null);
+const page = usePage()
+const flashSuccess = computed(() => page.props.value?.flash?.success ?? null)
+const flashError   = computed(() => page.props.value?.flash?.error ?? null)
+
+function confirmSubmit() {
+  Swal.fire({
+    title: '¿Estás seguro?',
+    text: 'Se guardarán los cambios realizados en esta caja.',
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonText: 'Sí, guardar',
+    cancelButtonText: 'Cancelar',
+    confirmButtonColor: '#3085d6',
+    cancelButtonColor: '#d33',
+  }).then((result) => {
+    if (result.isConfirmed) {
+      submit()
+    }
+  })
+}
 
 function submit() {
-  form.put(route('proyectos.amcaja.update', { proyecto: props.proyecto.id, id: props.acta.id }));
+  form.put(route('proyectos.amcaja.update', { proyecto: props.proyecto.id, id: props.acta.id }))
 }
 
 function volver() {
-  window.history.back();
+  window.location.href = `/proyectos/${props.proyecto.id}/inventario-salidas`;
 }
 </script>

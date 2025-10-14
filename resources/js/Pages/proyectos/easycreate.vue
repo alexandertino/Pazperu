@@ -100,7 +100,7 @@ function validarCampos() {
     errors.numero_descripcion_pieza = 'La numeración/descripción es requerida.';
   }
   if ((Number(form.gasto_moneda_local) > 0 || Number(form.ingreso_moneda_local) > 0) &&
-      (!tipoCambio.value || Number(tipoCambio.value) <= 0)) {
+    (!tipoCambio.value || Number(tipoCambio.value) <= 0)) {
     errors.tipo_cambio = 'El tipo de cambio debe ser mayor a 0 para convertir montos.';
   }
   if (!form.fecha || String(form.fecha).trim() === '') {
@@ -298,7 +298,7 @@ onMounted(async () => {
       }
 
       if (typeof data.next_numero !== 'undefined' &&
-          (!form.numero_descripcion_pieza || String(form.numero_descripcion_pieza).trim() === '')) {
+        (!form.numero_descripcion_pieza || String(form.numero_descripcion_pieza).trim() === '')) {
 
         const descripcion =
           (form.descripcion && String(form.descripcion).trim() !== '')
@@ -448,7 +448,7 @@ onMounted(async () => {
 
       // aplicar next_numero si viene del servidor y no tenemos número en el form
       if (typeof data.next_numero !== 'undefined' &&
-          (!form.numero_descripcion_pieza || String(form.numero_descripcion_pieza).trim() === '')) {
+        (!form.numero_descripcion_pieza || String(form.numero_descripcion_pieza).trim() === '')) {
 
         const descripcion =
           (form.descripcion && String(form.descripcion).trim() !== '')
@@ -480,12 +480,34 @@ onMounted(async () => {
   }
 });
 
+/* ------------------ Exclusión mutua: gasto ↔ ingreso ------------------ */
+const isIngresoLocked = computed(() => {
+  // Si hay un gasto mayor a 0, bloqueamos ingreso
+  return Number(form.gasto_moneda_local) > 0;
+});
+const isGastoLocked = computed(() => {
+  // Si hay un ingreso mayor a 0, bloqueamos gasto
+  return Number(form.ingreso_moneda_local) > 0;
+});
+
+watch(() => form.gasto_moneda_local, (nv) => {
+  if (Number(nv) > 0 && Number(form.ingreso_moneda_local) !== 0) {
+    form.ingreso_moneda_local = 0;
+  }
+});
+
+watch(() => form.ingreso_moneda_local, (nv) => {
+  if (Number(nv) > 0 && Number(form.gasto_moneda_local) !== 0) {
+    form.gasto_moneda_local = 0;
+  }
+});
+
 </script>
 
 <template>
   <AuthenticatedLayout>
-    <div>
-      <div class="max-w-3xl mx-auto p-6 bg-white dark:bg-gray-900 rounded-2xl shadow-lg transition-colors duration-300">
+    <div class="max-w-7xl mx-auto p-6">
+      <div class="max-w-3xl mx-auto p-6 bg-white dark:bg-gray-800 rounded-2xl shadow-lg transition-colors duration-300">
         <h2 class="text-2xl font-bold mb-6 text-gray-800 dark:text-gray-100 flex items-center gap-2">
           <span class="inline-block w-2 h-6 bg-blue-600 rounded"></span>
           Crear registro — Inventario / Presupuesto <span class="text-sm text-gray-400">(EASY)</span>
@@ -558,9 +580,15 @@ onMounted(async () => {
                 Gasto ({{ monedaLocal }})
               </label>
               <input v-model.number="form.gasto_moneda_local" type="number" step="0.01" aria-label="Gasto moneda local"
-                class="w-full mt-1 p-2 border rounded dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200" />
+                :disabled="isGastoLocked" :class="[
+                  'w-full mt-1 p-2 border rounded dark:border-gray-700 dark:text-gray-200',
+                  isGastoLocked ? 'opacity-60 cursor-not-allowed bg-gray-50 dark:bg-gray-900' : 'dark:bg-gray-800'
+                ]" />
               <p v-if="errors.gasto_moneda_local" class="text-red-500 text-sm mt-1">
                 {{ errors.gasto_moneda_local }}
+              </p>
+              <p v-else-if="isGastoLocked" class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Bloqueado porque hay un ingreso registrado (ponga 0 en Ingreso para editar).
               </p>
             </div>
 
@@ -569,13 +597,19 @@ onMounted(async () => {
                 Ingreso ({{ monedaLocal }})
               </label>
               <input v-model.number="form.ingreso_moneda_local" type="number" step="0.01"
-                aria-label="Ingreso moneda local"
-                class="w-full mt-1 p-2 border rounded dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200" />
+                aria-label="Ingreso moneda local" :disabled="isIngresoLocked" :class="[
+                  'w-full mt-1 p-2 border rounded dark:border-gray-700 dark:text-gray-200',
+                  isIngresoLocked ? 'opacity-60 cursor-not-allowed bg-gray-50 dark:bg-gray-900' : 'dark:bg-gray-800'
+                ]" />
               <p v-if="errors.ingreso_moneda_local" class="text-red-500 text-sm mt-1">
                 {{ errors.ingreso_moneda_local }}
               </p>
+              <p v-else-if="isIngresoLocked" class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Bloqueado porque hay un gasto registrado (ponga 0 en Gasto para editar).
+              </p>
             </div>
           </div>
+
 
           <!-- Valores convertidos (moneda gestión) -->
           <div class="grid grid-cols-2 gap-6">
@@ -648,7 +682,7 @@ onMounted(async () => {
               <input v-model="form.codigo_presupuestario" type="text" aria-label="Código presupuestario"
                 class="w-full mt-1 p-2 border rounded dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200" />
               <p v-if="errors.codigo_presupuestario" class="text-red-500 text-sm mt-1">{{ errors.codigo_presupuestario
-                }}</p>
+              }}</p>
             </div>
 
             <div>
@@ -675,29 +709,19 @@ onMounted(async () => {
               <div class="flex-1">
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
                   Bailleur de fondos
-                  <span
-                    class="ml-2 inline-block align-middle cursor-default text-gray-500 dark:text-gray-400"
+                  <span class="ml-2 inline-block align-middle cursor-default text-gray-500 dark:text-gray-400"
                     title="RAF-WILDER: 1 = fonds propres IDP, 2 = Union européenne, 3 = DGD, 4 = MAE Lux, 5 = FBSA, 6 = A REPARTIR"
-                    tabindex="0"
-                    role="img"
-                    aria-label="Información sobre códigos RAF-WILDER"
-                  >
+                    tabindex="0" role="img" aria-label="Información sobre códigos RAF-WILDER">
                     ℹ️
                   </span>
                 </label>
 
-                <input
-                  v-model="bailleurCodigo"
-                  type="text"
-                  aria-label="Bailleur de fondos"
-                  class="w-full mt-1 p-2 border rounded dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200"
-                />
+                <input v-model="bailleurCodigo" type="text" aria-label="Bailleur de fondos"
+                  class="w-full mt-1 p-2 border rounded dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200" />
               </div>
 
-              <div
-                v-if="bailleurNombre"
-                class="mt-6 px-3 py-2 text-sm border rounded bg-gray-50 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200"
-              >
+              <div v-if="bailleurNombre"
+                class="mt-6 px-3 py-2 text-sm border rounded bg-gray-50 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200">
                 {{ bailleurNombre }}
               </div>
             </div>
@@ -736,8 +760,15 @@ input[type="number"]::-webkit-inner-spin-button {
 }
 
 /* realce del foco para navegación con teclado */
-input:focus, textarea:focus, select:focus, button:focus {
-  outline: 2px solid rgba(37,99,235,0.6);
+input:focus,
+textarea:focus,
+select:focus,
+button:focus {
+  outline: 2px solid rgba(37, 99, 235, 0.6);
   outline-offset: 2px;
+}
+
+input[disabled] {
+  pointer-events: none;
 }
 </style>

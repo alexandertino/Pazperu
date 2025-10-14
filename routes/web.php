@@ -238,6 +238,8 @@ Route::middleware('auth')->group(function () {
         Route::put('/inventario/meta/{type}/{id}', [InventarioMetaController::class, 'update']);
         Route::delete('/inventario/meta/{type}/{id}', [InventarioMetaController::class, 'destroy']);
     });
+    
+    Route::get('/salidas/ultimo-codigo', [SalidaController::class, 'ultimoCodigo']);
 
     // API (recomendado)
     Route::post('/inventario/meta/insert-initial', [InventarioMetaController::class, 'insertInitialData']);

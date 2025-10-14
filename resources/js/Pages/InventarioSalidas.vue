@@ -155,6 +155,12 @@ const topN = ref(10);
 
 // Nuevo: filtro por solicitante (para la vista Precios)
 const filtroSolicitantePrecio = ref('todos');
+const filtroEncargado = ref('todos');
+
+const encargadosUnicos = computed(() => {
+    const nombres = props.salidas?.map(s => s?.nombre_encargado)?.filter(Boolean) || [];
+    return ['todos', ...new Set(nombres)];
+});
 
 const salidasFiltradas = computed(() =>
     [...(props.salidas || [])]
@@ -164,14 +170,20 @@ const salidasFiltradas = computed(() =>
             const nActa = String(s?.n_acta || '').toLowerCase();
             const lugar = String(s?.lugar || '').toLowerCase();
             const productoCode = String(s?.producto_code || s?.producto || '').toLowerCase();
+            const encargado = String(s?.nombre_encargado || '').toLowerCase();
 
-            const matchTexto = !q || nombre.includes(q) || nActa.includes(q) || lugar.includes(q) || productoCode.includes(q);
+            const matchTexto =
+                !q || nombre.includes(q) || nActa.includes(q) || lugar.includes(q) || productoCode.includes(q);
 
-            // filtro por estado (case-insensitive). 'todos' muestra todo.
-            const matchEstado = filtroEstado.value === 'todos' ||
+            const matchEstado =
+                filtroEstado.value === 'todos' ||
                 (String(s?.estado || '').toLowerCase() === String(filtroEstado.value || '').toLowerCase());
 
-            return matchTexto && matchEstado;
+            const matchEncargado =
+                filtroEncargado.value === 'todos' ||
+                encargado === String(filtroEncargado.value || '').toLowerCase();
+
+            return matchTexto && matchEstado && matchEncargado;
         })
         .sort((a, b) =>
             ordenSalidasAsc.value
@@ -453,7 +465,7 @@ const refrescarSalida = () => router.reload({ only: ['salidas'] });
 const salidasProducto = ref([]);
 let modalVisible = ref(false);
 let currentCodigo = ref(null);
-let currentProducto = ref({ nombre: null, codigo: null, descripcion: null, stock: null });
+let currentProducto = ref({ nombre: null, codigo: null, descripcion: null, stock: null, solicitado_por: null });
 let total = ref(null);
 
 
@@ -501,13 +513,14 @@ const verSalidas = async (itemOrCodigo) => {
             nombre: item?.descripcion ?? item?.producto_label ?? item?.producto_name ?? null,
             codigo: codigo,
             descripcion: item?.descripcion ?? item?.desc ?? null,
-            stock: item?.stock ?? (item?.inventario ?? null)
+            stock: item?.stock ?? (item?.inventario ?? null),
+            solicitado_por: item?.solicitado_por ?? null
         };
 
         // si no teníamos nombre, intentamos extraerlo de la primera fila de salidas
         if (!currentProducto.value.nombre && salidasProducto.value.length > 0) {
             const first = salidasProducto.value[0];
-            currentProducto.value.nombre = first.producto_label ?? first.producto ?? first.producto_name ?? null;
+            currentProducto.value.nombre = first.producto_label ?? first.producto ?? first.producto_name ?? first.solicitante ?? null;
         }
 
         // calcular total si hay columna cantidad
@@ -546,9 +559,233 @@ const verSalidas = async (itemOrCodigo) => {
     }
 };
 
+//pdf reportes de salidas
+const salidasPdf_generateHTML = ({ producto = {}, salidas = [], proyectoNombre = '', companyName = '', logoUrl = '', fecha = null }) => {
+    const escapeHtml = (s) => {
+        if (s === null || s === undefined) return '';
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    };
+    const fmtDate = (d) => {
+        if (!d) return '';
+        const dt = (d instanceof Date) ? d : new Date(d);
+        if (isNaN(dt)) return escapeHtml(d);
+        return dt.toLocaleString();
+    };
+
+    const rowsHtml = salidas.map((r, i) => {
+        const cantidad = r.cantidad ?? r.qty ?? r.cant ?? r.cantidad_salida ?? '';
+        const cantidadFmt = formatearCantidad(cantidad) || '—';
+        const fechaSalida = r.fecha ?? r.fecha_salida ?? r.created_at ?? '';
+        const solicitante = r.solicitado_por ?? r.solicitante ?? r.persona ?? r.persona_nombre ?? '';
+        const nActa = r.n_acta ?? r.nacta ?? r.acta ?? '';
+        const lugar = r.lugar ?? r.site ?? '';
+        const distrito = r.distrito ?? r.district ?? '';
+        return `
+    <tr>
+      <td style="padding:6px 8px;text-align:right">${i + 1}</td>
+      <td style="padding:6px 8px">${escapeHtml(String(nActa || '—'))}</td>
+      <td style="padding:6px 8px">${escapeHtml(String(r.nombre ?? solicitante ?? '—'))}</td>
+      <td style="padding:6px 8px">${escapeHtml(lugar || '—')}</td>
+      <td style="padding:6px 8px">${escapeHtml(distrito || '—')}</td>
+      <td style="padding:6px 8px">${escapeHtml(fmtDate(fechaSalida) || '—')}</td>
+      <td style="padding:6px 8px;text-align:right">${escapeHtml(cantidadFmt)}</td>
+    </tr>`;
+    }).join('');
 
 
-/*kkkkkk*/
+    const nombre = producto.nombre ?? producto.producto_label ?? producto.producto_name ?? '';
+    const codigo = producto.codigo ?? producto.code ?? '';
+    const descripcion = producto.descripcion ?? producto.desc ?? '';
+    const stock = (producto.stock !== undefined && producto.stock !== null) ? producto.stock : '';
+    const solicitadoPor = producto.solicitado_por ?? '';
+
+    const fechaGeneracion = fecha ? fmtDate(fecha) : fmtDate(new Date());
+
+    return `
+  <div class="paper" style="font-family: Arial, Helvetica, sans-serif; box-sizing:border-box; padding:18px; color:#222;">
+    <style>
+      .header { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; }
+      .brand { display:flex; align-items:center; gap:12px; }
+      .logo-wrap { width:86px; height:86px; display:flex; align-items:center; justify-content:center; border-radius:8px; overflow:hidden; background:#fff; border:1px solid #eee; }
+      .logo-wrap img { max-width:100%; max-height:100%; display:block; }
+      .company { font-size:16px; font-weight:700; }
+      .meta { font-size:12px; color:#444; }
+      .title { font-size:16px; font-weight:700; margin-bottom:6px; }
+      .product-info { border:1px solid #e6e6e6; padding:10px; border-radius:6px; margin-bottom:12px; font-size:13px; background: #fafafa; }
+      table { width:100%; border-collapse:collapse; font-size:12px; }
+      th, td { border:1px solid #e6e6e6; padding:6px 8px; }
+      th { background:#f4f4f4; text-align:left; font-weight:700; }
+      .small { font-size:11px; color:#666; }
+      .right { text-align:right; }
+      @media print { .paper { padding: 12mm; } }
+    </style>
+
+    <div class="header">
+      <div class="brand">
+        <div class="logo-wrap">
+            <img src="/images/logo.png" alt="Logo" />
+        </div>
+        <div>
+          <div class="company">Islas De Paz Peru</div>
+          <div class="meta">Proyecto: ${escapeHtml(proyectoNombre || '')}</div>
+        </div>
+      </div>
+      <div class="small right">Generado: ${escapeHtml(fechaGeneracion)}</div>
+    </div>
+
+    <div class="title">Salidas del producto — ${escapeHtml(nombre || codigo)}</div>
+
+    <div class="product-info">
+      <div><strong>Producto:</strong> ${escapeHtml(nombre)}</div>
+      <div><strong>Código:</strong> ${escapeHtml(codigo)}</div>
+      <div><strong>Descripción:</strong> ${escapeHtml(descripcion)}</div>
+      <div><strong>Stock Actual:</strong> ${escapeHtml(String(stock))}</div>
+      <div><strong>Solicitado por:</strong> ${escapeHtml(solicitadoPor)}</div>
+    </div>
+
+    <div style="margin-top:6px; margin-bottom:6px; font-weight:600">Detalle de salidas</div>
+
+    <table>
+      <thead>
+        <tr>
+          <th style="width:40px">#</th>
+          <th style="width:90px">N° Acta</th>
+          <th style="min-width:140px">Nombre</th>
+          <th style="width:120px">Lugar</th>
+          <th style="width:120px">Distrito</th>
+          <th style="width:140px">Fecha</th>
+          <th style="width:90px">Cantidad</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rowsHtml}
+      </tbody>
+    </table>
+
+    <div style="margin-top:18px; font-size:12px; color:#333; display:flex; justify-content:space-between; align-items:center;">
+      <div><strong>Total filas:</strong> ${salidas.length}</div>
+    </div>
+  </div>
+  `;
+};
+
+// Descargar PDF (usa tu misma librería html2pdf.js)
+const salidasPdf_downloadPdfFile = async ({ producto = {}, salidas = [], proyectoNombre = '', companyName = '', logoUrl = '', filename = null }) => {
+    if (!producto || (!producto.codigo && !producto.nombre)) {
+        Swal.fire('Falta información', 'El producto debe tener nombre o código para generar el PDF.', 'warning');
+        return;
+    }
+
+    const nFile = filename || `${String(producto.nombre ?? producto.codigo ?? 'salidas')}.pdf`.replace(/[\\\/:*?"<>|]/g, '_');
+    const html = salidasPdf_generateHTML({
+        producto,
+        salidas,
+        proyectoNombre,
+        companyName,
+        logoUrl,
+        fecha: new Date()
+    });
+
+    // convertir mm->px a 96dpi
+    const mmToPx = (mm, dpi = 96) => Math.round(mm * (dpi / 25.4));
+    const a4WidthPx = mmToPx(210, 96);
+    const container = document.createElement('div');
+    container.style.position = 'fixed';
+    container.style.left = '-10000px';
+    container.style.top = '0';
+    container.style.width = `${a4WidthPx}px`;
+    container.style.boxSizing = 'border-box';
+    container.innerHTML = html;
+    document.body.appendChild(container);
+
+    const elementToPdf = container.querySelector('.paper') || container;
+    elementToPdf.style.margin = '0 auto';
+    elementToPdf.style.boxSizing = 'border-box';
+    elementToPdf.style.width = `${a4WidthPx}px`;
+
+    // esperar recursos (imgs + fonts)
+    await (async function waitResources(root, timeout = 10000) {
+        const imgs = Array.from(root.querySelectorAll('img'));
+        const imgPromises = imgs.map(img => new Promise(res => {
+            if (!img.src) return res();
+            if (img.complete && img.naturalWidth !== 0) return res();
+            const done = () => { img.removeEventListener('load', done); img.removeEventListener('error', done); res(); };
+            img.addEventListener('load', done); img.addEventListener('error', done);
+            setTimeout(done, 5000);
+        }));
+        const fontPromise = (document.fonts && document.fonts.ready) ? document.fonts.ready : Promise.resolve();
+        await Promise.race([Promise.all([...imgPromises, fontPromise]), new Promise(r => setTimeout(r, timeout))]);
+        await new Promise(r => setTimeout(r, 120));
+    })(container);
+
+    // cargar html2pdf si no existe
+    await (async function loadHtml2Pdf() {
+        if (window.html2pdf) return;
+        await new Promise((resolve, reject) => {
+            const s = document.createElement('script');
+            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.9.3/html2pdf.bundle.min.js';
+            s.onload = () => setTimeout(() => window.html2pdf ? resolve() : reject(new Error('html2pdf no inicializó')), 150);
+            s.onerror = () => reject(new Error('No se pudo cargar html2pdf'));
+            document.head.appendChild(s);
+            setTimeout(() => { if (!window.html2pdf) reject(new Error('Timeout cargando html2pdf')); }, 10000);
+        });
+    })();
+
+    try {
+        const scale = 2;
+        const opt = {
+            margin: 8,
+            filename: nFile,
+            image: { type: 'jpeg', quality: 0.98 },
+            html2canvas: {
+                scale,
+                useCORS: true,
+                allowTaint: false,
+                logging: false,
+                width: a4WidthPx,
+                windowWidth: a4WidthPx,
+                dpi: 300
+            },
+            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+            pagebreak: { mode: ['css', 'legacy'] }
+        };
+
+        await new Promise((resolve, reject) => {
+            try {
+                window.html2pdf().set(opt).from(elementToPdf).toPdf().get('pdf').then(() => {
+                    window.html2pdf().set(opt).from(elementToPdf).save(nFile, () => resolve());
+                }).catch(err => reject(err));
+            } catch (err) {
+                reject(err);
+            }
+        });
+    } catch (err) {
+        console.error('Error generando PDF salidas:', err);
+        Swal.fire('Error', 'No se pudo generar el PDF en el navegador. Abriendo vista imprimible...', 'error');
+        try {
+            const w = window.open('', '_blank', 'noopener,noreferrer');
+            if (w) { w.document.open(); w.document.write(html); w.document.close(); w.focus(); setTimeout(() => { try { w.print(); } catch (e) { } }, 300); }
+            else Swal.fire('Error', 'Permite popups e inténtalo nuevamente.', 'error');
+        } catch (e) { console.error(e); }
+    } finally {
+        try { document.body.removeChild(container); } catch (e) { }
+    }
+};
+
+
+const descargarSalidasPdf = () => {
+    if (!currentProducto.value || !salidasProducto.value?.length) {
+        Swal.fire('Sin datos', 'No hay salidas para exportar.', 'warning');
+        return;
+    }
+
+    salidasPdf_downloadPdfFile({
+        producto: currentProducto.value,
+        salidas: salidasProducto.value,
+        proyectoNombre: props.proyecto?.nombre || 'Proyecto sin nombre'
+    });
+};
+
 // =====================
 // 🔹 Refs / Estado local
 // =====================
@@ -641,10 +878,6 @@ function abrirCrear(proyectoId) {
     window.location.href = URL_CREAR_ACTA(proyectoId)
 }
 
-/* ==========================
-  Helpers y computeds para Contabilidad (apertura / movimientos / cierre)
-  Pega este bloque en tu <script setup> (por ejemplo después de formatNumber)
-========================== */
 
 /* ---------- parseNumero (robusto) ---------- */
 const parseNumero = (val) => {
@@ -711,7 +944,6 @@ const esDelMesCon = (fechaStr, m, y) => {
 };
 
 
-/* ---------- util: último saldo del mes (intenta campo 'saldo', si no fallback a ingresos-egresos) ---------- */
 /* ---------- util: último saldo del mes (intenta campo 'saldo', si no fallback a ingresos-egresos) ---------- */
 const ultimoSaldoDelMes = (items = [], fechaCampo = 'fecha') => {
     if (!Array.isArray(items) || items.length === 0) return 0;
@@ -877,17 +1109,6 @@ function abrirCrearEasyConActa(acta = {}) {
     });
 }
 
-
-
-// =======================
-// hohla
-// =======================
-
-
-
-// =======================
-// hohla
-// =======================
 function eliminarCaja(id) {
     if (confirm('¿Seguro que quieres eliminar este registro de caja?')) {
         router.delete(route('proyectos.amcaja.destroy', { proyecto: props.proyecto.id, id }))
@@ -906,11 +1127,6 @@ function eliminarActa(id) {
     // ajusta el nombre de la ruta si es distinto
     router.delete(route('proyectos.easy.destroy', { proyecto: props.proyecto.id, id }));
 }
-
-
-// -----------------------------
-// Vinculaciones (batch + helpers)
-// -----------------------------
 
 // Estado visible en template
 const modalVinculacionVisible = ref(false)
@@ -1052,6 +1268,33 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
     });
 };
 
+const formatearCantidad = (valor) => {
+    if (valor === null || valor === undefined || valor === '') return '';
+    const n = Number(valor);
+    if (Number.isNaN(n)) return String(valor);
+    if (Number.isInteger(n)) return String(n);
+    const f = n.toFixed(2);
+    return f.replace(/\.?0+$/, '').replace(/\.(\d)0$/, '.$1');
+};
+
+const totalFormateado = ref('');
+
+// dentro de verSalidas, donde sumas:
+if (salidasProducto.value.length > 0) {
+    let suma = 0;
+    let tiene = false;
+    for (const row of salidasProducto.value) {
+        const v = posibleCantidad(row);
+        const n = Number(v);
+        if (!isNaN(n)) { suma += n; tiene = true; }
+    }
+    total.value = tiene ? suma : null;
+    totalFormateado.value = tiene ? formatearCantidad(suma) : '';
+} else {
+    total.value = null;
+    totalFormateado.value = '';
+}
+
 
 </script>
 
@@ -1105,7 +1348,8 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                 </div>
             </div>
             <p class="text-sm text-gray-500 dark:text-gray-400">
-                Estado: {{ proyecto.estado }} — Inicio: {{ proyecto.fecha_inicio }} — Fin: {{ proyecto.fecha_fin ?? 'Pendiente' }}
+                Estado: {{ proyecto.estado }} — Inicio: {{ proyecto.fecha_inicio }} — Fin: {{ proyecto.fecha_fin ??
+                    'Pendiente' }}
             </p>
         </template>
 
@@ -1174,7 +1418,8 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                     <div class="flex flex-wrap items-center gap-2">
                         <button @click="toggleOrdenInventario"
                             class="px-4 py-2 bg-gray-700 text-white rounded-lg shadow hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-500 transition-colors duration-200 dark:bg-gray-200 dark:text-gray-800 dark:hover:bg-gray-300">
-                            📅 Ordenar: <span class="font-semibold">{{ ordenInventarioAsc ? 'Antiguos' : 'Recientes'}}</span>
+                            📅 Ordenar: <span class="font-semibold">{{ ordenInventarioAsc ? 'Antiguos' :
+                                'Recientes' }}</span>
                         </button>
                         <button @click="refrescarInventario"
                             class="px-4 py-2 bg-blue-500 text-white rounded-lg shadow hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-400 transition-colors duration-200">
@@ -1206,7 +1451,7 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                                 <th class="p-3">Stock</th>
                                 <th class="p-3">Precio</th>
                                 <th class="p-3">Solicitado por</th>
-                                <th class="p-3" v-if="user.role === 'admin' || user.role === 'equipo'">
+                                <th class="p-3" v-if="user.role === 'admin'">
                                     Acciones
                                 </th>
                             </tr>
@@ -1252,7 +1497,6 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                                     </button>
 
                                 </td>
-
                                 <div v-if="comentarioActivo === item.id"
                                     class="mt-2 p-3 bg-gray-100 dark:bg-gray-800 rounded-lg shadow-md text-sm text-gray-700 dark:text-gray-200">
                                     <p class="whitespace-pre-line">{{ item.comentario }}</p>
@@ -1270,6 +1514,12 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                                 <h2 class="text-lg font-bold text-gray-800 dark:text-white">Salidas del producto
                                 </h2>
                                 <div class="flex items-center gap-2">
+                                    <button v-if="['equipo', 'admin'].includes(user.role)"
+                                        class="px-3 py-1 rounded-md bg-green-500 text-white hover:bg-green-600 transition"
+                                        @click="descargarSalidasPdf">
+                                        📄 Exportar Salidas en PDF
+                                    </button>
+
                                     <button @click="() => { modalVisible = false }"
                                         class="px-3 py-1 rounded-md bg-gray-500 text-white hover:bg-gray-600 transition"
                                         title="Cerrar">Cerrar</button>
@@ -1280,12 +1530,15 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                             <div class="mb-4 text-sm text-gray-700 dark:text-gray-200">
                                 <div><strong>Producto:</strong> {{ currentProducto.nombre ??
                                     (salidasProducto[0]?.producto_label
-                                    ?? salidasProducto[0]?.producto ?? '—') }}</div>
+                                        ?? salidasProducto[0]?.producto ?? '—') }}</div>
                                 <div><strong>Código:</strong> {{ currentProducto.codigo ?? currentCodigo ??
                                     (salidasProducto[0]?.producto_code ?? salidasProducto[0]?.codigo ?? '—') }}
                                 </div>
                                 <div v-if="currentProducto.stock !== null"><strong>Stock:</strong>
                                     {{ currentProducto.stock }}
+                                </div>
+                                <div>
+                                    <strong>Solucitado:</strong>{{ currentProducto.solicitado_por }}
                                 </div>
                             </div>
 
@@ -1314,7 +1567,8 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                                             <td class="p-2">{{ s.lugar ?? s.site ?? '—' }}</td>
                                             <td class="p-2">{{ s.distrito ?? s.district ?? '—' }}</td>
                                             <td class="p-2">{{ formatFecha(s.fecha) }}</td>
-                                            <td class="p-2">{{ s.cantidad ?? s.qty ?? s.cant ?? '—' }}</td>
+                                            <td class="p-2">{{ formatearCantidad(s.cantidad ?? s.qty ?? s.cant) || '—'
+                                                }}</td>
                                         </tr>
                                     </tbody>
                                 </table>
@@ -1358,14 +1612,24 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
 
                         <div class="flex flex-col">
                             <label class="text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Estado</label>
-                            <select v-model="filtroEstado"
-                                class="border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500">
+                            <select v-model="filtroEstado" class="w-48 border rounded-lg px-3 py-2 text-sm shadow-sm focus:ring-2 focus:ring-indigo-500
+                            dark:bg-gray-700 dark:text-white dark:border-gray-600">
                                 <option value="todos">Todos</option>
                                 <option value="pendiente">Pendiente</option>
                                 <option value="aceptado">Aceptado</option>
-                                <option value="rechazado">Rechazado</option>
                             </select>
                         </div>
+                        <div class="flex flex-col">
+                            <label class="text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Encargado</label>
+                            <select v-model="filtroEncargado" class="w-48 border rounded-lg px-3 py-2 text-sm shadow-sm focus:ring-2 focus:ring-indigo-500
+           dark:bg-gray-700 dark:text-white dark:border-gray-600">
+                                <option v-for="encargado in encargadosUnicos" :key="encargado"
+                                    :value="encargado.toLowerCase()">
+                                    {{ encargado }}
+                                </option>
+                            </select>
+                        </div>
+
                     </div>
 
                     <div class="flex flex-wrap items-center gap-2">
@@ -1402,6 +1666,7 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                         <thead class="sticky top-0 z-10 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-100">
                             <tr>
                                 <th class="p-3">Estado</th>
+                                <th class="p-3">Generado por</th>
                                 <th class="p-3">N° Acta</th>
                                 <th class="p-3">Nombre</th>
                                 <th class="p-3">Lugar</th>
@@ -1420,22 +1685,19 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
 
                                 <!-- Columna estado -->
                                 <td class="p-3">
-                                    <button
-                                        @click="user.role === 'admin' && cambiarEstado(salida)"
-                                        :disabled="user.role !== 'admin'"
-                                        :class="[
+                                    <button @click="user.role === 'admin' && cambiarEstado(salida)"
+                                        :disabled="user.role !== 'admin'" :class="[
                                             'px-3 py-1 rounded-lg font-semibold text-white text-xs shadow transition',
                                             salida.estado === 'pendiente'
                                                 ? 'bg-red-500 hover:bg-red-600'
                                                 : 'bg-green-500 hover:bg-green-600',
                                             user.role !== 'admin' ? 'opacity-50 cursor-not-allowed' : ''
-                                        ]"
-                                    >
+                                        ]">
                                         {{ salida.estado }}
                                     </button>
                                 </td>
 
-
+                                <td class="p-3">{{ salida.nombre_encargado }}</td>
                                 <td class="p-3">{{ salida.n_acta }}</td>
                                 <td class="p-3">{{ salida.nombre }}</td>
                                 <td class="p-3">{{ salida.lugar }}</td>
@@ -1464,7 +1726,7 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                                 </td>
 
                                 <td class="p-3"> {{ salida.um }}</td>
-                                <td class="p-3">{{ salida.cantidad }}</td>
+                                <td class="p-3">{{ formatearCantidad(salida.cantidad) }}</td>
                                 <td v-if="user.role === 'admin' || user.role === 'equipo'"
                                     class="p-3 flex gap-2 items-center">
                                     <a :href="`/proyectos/${proyecto.id}/salidas/${salida.id}/edit`" title="Editar"
@@ -1568,12 +1830,14 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                     <div v-if="filtroSolicitantePrecio !== 'todos'" class="flex gap-3 ml-0 md:ml-4">
                         <div class="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg shadow-sm min-w-[110px]">
                             <p class="text-xs text-gray-500 dark:text-gray-400">Productos</p>
-                            <p class="font-bold text-gray-800 dark:text-white text-lg">{{preciosSolicitanteStats.count}}
+                            <p class="font-bold text-gray-800 dark:text-white text-lg">{{ preciosSolicitanteStats.count
+                            }}
                             </p>
                         </div>
                         <div class="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg shadow-sm min-w-[140px]">
                             <p class="text-xs text-gray-500 dark:text-gray-400">Valor total</p>
-                            <p class="font-bold text-gray-800 dark:text-white text-lg">S/ {{Number(preciosSolicitanteStats.totalValue).toFixed(2) }}</p>
+                            <p class="font-bold text-gray-800 dark:text-white text-lg">S/
+                                {{ Number(preciosSolicitanteStats.totalValue).toFixed(2) }}</p>
                         </div>
                     </div>
                 </div>
@@ -1584,7 +1848,8 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                         <div class="flex justify-between items-start">
                             <div>
                                 <p class="text-sm text-gray-600 dark:text-gray-400">Valor Total</p>
-                                <p class="text-2xl font-bold text-indigo-600 dark:text-indigo-300">S/ {{Number(totalInventario).toFixed(2) }}</p>
+                                <p class="text-2xl font-bold text-indigo-600 dark:text-indigo-300">S/
+                                    {{ Number(totalInventario).toFixed(2) }}</p>
                             </div>
                             <button @click="mostrarDetalleTotal = !mostrarDetalleTotal" aria-pressed="false"
                                 class="text-xs px-2 py-1 bg-indigo-200 dark:bg-indigo-700 rounded">
@@ -1594,21 +1859,26 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
 
                         <ul v-if="mostrarDetalleTotal" class="mt-3 text-sm max-h-40 overflow-y-auto pr-2">
                             <li v-for="item in props.inventarios" :key="item.id" class="flex justify-between py-1">
-                                <span class="truncate max-w-[70%]">{{ item.descripcion }} ({{ item.stock }} × S/ {{Number(item.precio ?? 0).toFixed(2) }})</span>
-                                <span class="font-semibold">S/ {{ (Number(item.stock ?? 0) * Number(item.precio ?? 0)).toFixed(2)}}</span>
+                                <span class="truncate max-w-[70%]">{{ item.descripcion }} ({{ item.stock }} × S/
+                                    {{ Number(item.precio ?? 0).toFixed(2) }})</span>
+                                <span class="font-semibold">S/ {{ (Number(item.stock ?? 0) * Number(item.precio ??
+                                    0)).toFixed(2) }}</span>
                             </li>
                         </ul>
                     </div>
 
                     <div class="p-4 bg-green-50 dark:bg-green-900/30 rounded-xl shadow-sm">
                         <p class="text-sm text-gray-600 dark:text-gray-400">Entradas</p>
-                        <p class="text-xl font-bold text-green-600 dark:text-green-300">+ S/ {{Number(totalEntradas).toFixed(2) }}
+                        <p class="text-xl font-bold text-green-600 dark:text-green-300">+ S/
+                            {{ Number(totalEntradas).toFixed(2)
+                            }}
                         </p>
                     </div>
 
                     <div class="p-4 bg-red-50 dark:bg-red-900/30 rounded-xl shadow-sm">
                         <p class="text-sm text-gray-600 dark:text-gray-400">Salidas</p>
-                        <p class="text-xl font-bold text-red-600 dark:text-red-300">- S/ {{Number(totalSalidas).toFixed(2)}}</p>
+                        <p class="text-xl font-bold text-red-600 dark:text-red-300">- S/
+                            {{ Number(totalSalidas).toFixed(2) }}</p>
                     </div>
                 </div>
 
@@ -1626,7 +1896,8 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                                         :style="{ width: (Number(totalInventario) > 0 ? (Number(cat.val || 0) / Number(totalInventario)) * 100 : 0) + '%' }">
                                     </div>
                                 </div>
-                                <div class="w-28 text-right text-sm font-semibold dark:text-white">S/ {{ Number(cat.val || 0).toFixed(2) }}</div>
+                                <div class="w-28 text-right text-sm font-semibold dark:text-white">S/ {{ Number(cat.val
+                                    || 0).toFixed(2) }}</div>
                             </div>
                         </template>
                     </div>
@@ -1648,7 +1919,8 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                             class="list-decimal ml-5 space-y-2 text-sm text-gray-700 dark:text-white max-h-72 overflow-y-auto">
                             <li v-for="it in topItems" :key="it.id" class="flex justify-between items-center">
                                 <div class="truncate max-w-[60%]">{{ it.descripcion }}</div>
-                                <div class="text-sm font-semibold">S/ {{ (Number(it.stock ?? 0) * Number(it.precio ?? 0)).toFixed(2) }}</div>
+                                <div class="text-sm font-semibold">S/ {{ (Number(it.stock ?? 0) * Number(it.precio ??
+                                    0)).toFixed(2) }}</div>
                             </li>
                         </ol>
                     </aside>
@@ -1672,21 +1944,13 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                                 <tr v-for="item in preciosFiltrados" :key="item.id"
                                     class="border-t dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 dark:text-white">
                                     <td class="p-2">{{ item.codigo }}</td>
-                                    <td class="p-2">
-                                        <div class="flex items-center justify-between gap-2">
-                                            <div class="truncate max-w-[60%]">{{ item.descripcion }}</div>
-                                            <!-- Botón pequeño para ver salidas -->
-                                            <button @click="verSalidas(item)"
-                                                class="ml-2 text-xs px-2 py-1 border rounded text-gray-700 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 hover:bg-gray-100 dark:hover:bg-gray-800"
-                                                title="Ver salidas de este producto">
-                                                Ver salidas
-                                            </button>
-                                        </div>
-                                    </td>
+                                    <td class="p-2">{{ item.descripcion }}</td>
                                     <td class="p-2">{{ item.categoria }}</td>
                                     <td class="p-2 text-right">{{ item.stock }}</td>
                                     <td class="p-2 text-right">S/ {{ Number(item.precio ?? 0).toFixed(2) }}</td>
-                                    <td class="p-2 font-semibold text-right">S/ {{ (Number(item.stock ?? 0) * Number(item.precio ?? 0)).toFixed(2) }}</td>
+                                    <td class="p-2 font-semibold text-right">S/ {{ (Number(item.stock ?? 0) *
+                                        Number(item.precio
+                                            ?? 0)).toFixed(2) }}</td>
                                     <td class="p-2">{{ item.solicitado_por ?? '-' }}</td>
                                 </tr>
 
@@ -1714,8 +1978,11 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                                                 Salidas — {{ currentProducto.nombre ?? currentCodigo ?? 'Producto' }}
                                             </h3>
                                             <p class="text-sm text-gray-500 dark:text-gray-400">
-                                                Código: <span class="font-medium text-gray-700 dark:text-gray-200">{{currentProducto.codigo ?? currentCodigo }}</span>
-                                                <span v-if="currentProducto.stock !== null"> • Stock: <strong>{{currentProducto.stock }}</strong></span>
+                                                Código: <span class="font-medium text-gray-700 dark:text-gray-200">{{
+                                                    currentProducto.codigo
+                                                    ?? currentCodigo }}</span>
+                                                <span v-if="currentProducto.stock !== null"> • Stock:
+                                                    <strong>{{ currentProducto.stock }}</strong></span>
                                             </p>
                                         </div>
 
@@ -1760,11 +2027,14 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                                                         class="border-t dark:border-gray-700">
                                                         <td class="p-2">
                                                             <!-- intentamos formatear fecha si existe -->
-                                                            <span>{{ formatFecha ? formatFecha(s.fecha ?? s.created_at ?? s.date) : (s.fecha ?? s.created_at ?? '-') }}</span>
+                                                            <span>{{ formatFecha ? formatFecha(s.fecha ?? s.created_at
+                                                                ?? s.date) : (s.fecha ?? s.created_at ?? '-') }}</span>
                                                         </td>
                                                         <td class="p-2">{{ s.nombre ?? s.tipo ?? '-' }}</td>
-                                                        <td class="p-2 font-medium">{{ s.cantidad ?? s.qty ?? s.cant ?? s.cantidad_salida ?? '-' }}</td>
-                                                        <td class="p-2">{{ s.um ?? s.solicitado_por ?? s.usuario ?? '-' }}</td>
+                                                        <td class="p-2 font-medium">{{ s.cantidad ?? s.qty ?? s.cant ??
+                                                            s.cantidad_salida ?? '-' }}</td>
+                                                        <td class="p-2">{{ s.um ?? s.solicitado_por ?? s.usuario ?? '-'
+                                                            }}</td>
                                                         <td class="p-2">{{ s.cantidad ?? s.descripcion ?? '-' }}</td>
                                                     </tr>
                                                 </tbody>
@@ -1836,6 +2106,7 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                                 </div>
                                 <button @click="nextMonth"
                                     class="px-3 py-1 rounded bg-gray-100 dark:bg-gray-700">›</button>
+
                             </div>
 
                             <!-- Acciones -->
@@ -1859,7 +2130,8 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
 
                     <!-- Línea informativa -->
                     <div class="text-sm text-gray-500 mb-2">
-                        Mostrando: <strong>{{ tablaVisibleLabel }}</strong> — {{nombreMes(mesActivo)}} {{ anioActivo}}
+                        Mostrando: <strong>{{ tablaVisibleLabel }}</strong> — {{ nombreMes(mesActivo) }} {{ anioActivo
+                        }}
                     </div>
 
                     <!-- Tablas -->
@@ -1977,7 +2249,8 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                                     </div>
 
                                     <div class="mb-4 text-sm text-gray-700 dark:text-gray-200">
-                                        <div><strong>N° Acta:</strong> {{ currentActa?.n_acta ?? currentActa?.id ?? '—'}}
+                                        <div><strong>N° Acta:</strong> {{ currentActa?.n_acta ?? currentActa?.id ??
+                                            '—' }}
                                         </div>
                                         <div><strong>Fecha:</strong> {{ formatFecha(currentActa?.fecha) }}</div>
                                         <div><strong>Descripción:</strong> {{ currentActa?.descripcion ?? '—' }}</div>
@@ -2007,8 +2280,11 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                                                     <!-- Nombre / categoría -->
                                                     <td class="p-2">
                                                         <div v-if="v.inventario">
-                                                            <div class="font-semibold">{{ v.inventario.descripcion ?? v.inventario.codigo ?? '—' }}</div>
-                                                            <div class="text-xs text-gray-500">{{ v.inventario.categoria ?? '—'}}
+                                                            <div class="font-semibold">{{ v.inventario.descripcion ??
+                                                                v.inventario.codigo ?? '—' }}</div>
+                                                            <div class="text-xs text-gray-500">{{ v.inventario.categoria
+                                                                ??
+                                                                '—' }}
                                                             </div>
                                                         </div>
                                                         <div v-else>
@@ -2029,7 +2305,9 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                                                     <!-- Cantidad / entradas / stock -->
                                                     <td class="p-2">
                                                         <div v-if="v.inventario">
-                                                            {{ v.inventario.entradas ?? v.inventario.stock ?? v.cantidad ?? '—'}}
+                                                            {{ v.inventario.entradas ?? v.inventario.stock ?? v.cantidad
+                                                                ??
+                                                                '—' }}
                                                         </div>
                                                         <div v-else>
                                                             {{ v.cantidad ?? '—' }}
@@ -2039,13 +2317,21 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                                                     <!-- Detalles: precio, fecha, stock -->
                                                     <td class="p-2">
                                                         <div v-if="v.inventario">
-                                                            <div>Precio: <strong>{{ typeof v.inventario.precio !== 'undefined' ? formatNumber(v.inventario.precio) : '—' }}</strong>
+                                                            <div>Precio: <strong>{{ typeof v.inventario.precio !==
+                                                                'undefined' ?
+                                                                formatNumber(v.inventario.precio) : '—' }}</strong>
                                                             </div>
-                                                            <div class="text-xs text-gray-500">Fecha: {{v.inventario.fecha ? formatFecha(v.inventario.fecha) : '—' }}</div>
-                                                            <div class="text-xs text-gray-500">Stock: {{v.inventario.stock ?? '—'}}</div>
+                                                            <div class="text-xs text-gray-500">Fecha:
+                                                                {{ v.inventario.fecha ?
+                                                                    formatFecha(v.inventario.fecha) : '—' }}</div>
+                                                            <div class="text-xs text-gray-500">Stock:
+                                                                {{ v.inventario.stock ??
+                                                                    '—' }}</div>
                                                         </div>
                                                         <div v-else>
-                                                            <div class="text-xs">{{ v.meta ? (typeof v.meta === 'object' ? JSON.stringify(v.meta) : v.meta) : '' }}</div>
+                                                            <div class="text-xs">{{ v.meta ? (typeof v.meta === 'object'
+                                                                ?
+                                                                JSON.stringify(v.meta) : v.meta) : '' }}</div>
                                                         </div>
                                                     </td>
 
@@ -2056,7 +2342,8 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                                     </div>
 
                                     <div class="mt-4 text-right text-sm text-gray-600 dark:text-gray-400">
-                                        <span><strong>Total vinculaciones:</strong> {{ vinculacionesActuales?.length ?? 0}}</span>
+                                        <span><strong>Total vinculaciones:</strong> {{ vinculacionesActuales?.length ??
+                                            0 }}</span>
                                     </div>
                                 </div>
                             </div>
@@ -2176,7 +2463,8 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                                     </div>
 
                                     <div class="mb-4 text-sm text-gray-700 dark:text-gray-200">
-                                        <div><strong>N° Acta:</strong> {{ currentActa?.n_acta ?? currentActa?.id ?? '—'}}
+                                        <div><strong>N° Acta:</strong> {{ currentActa?.n_acta ?? currentActa?.id ??
+                                            '—' }}
                                         </div>
                                         <div><strong>Fecha:</strong> {{ formatFecha(currentActa?.fecha) }}</div>
                                         <div><strong>Descripción:</strong> {{ currentActa?.descripcion ?? '—' }}</div>
@@ -2206,8 +2494,11 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                                                     <!-- Nombre / categoría -->
                                                     <td class="p-2">
                                                         <div v-if="v.inventario">
-                                                            <div class="font-semibold">{{ v.inventario.descripcion ?? v.inventario.codigo ?? '—' }}</div>
-                                                            <div class="text-xs text-gray-500">{{ v.inventario.categoria ?? '—'}}
+                                                            <div class="font-semibold">{{ v.inventario.descripcion ??
+                                                                v.inventario.codigo ?? '—' }}</div>
+                                                            <div class="text-xs text-gray-500">{{ v.inventario.categoria
+                                                                ??
+                                                                '—' }}
                                                             </div>
                                                         </div>
                                                         <div v-else>
@@ -2228,7 +2519,9 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                                                     <!-- Cantidad / entradas / stock -->
                                                     <td class="p-2">
                                                         <div v-if="v.inventario">
-                                                            {{ v.inventario.entradas ?? v.inventario.stock ?? v.cantidad ?? '—'}}
+                                                            {{ v.inventario.entradas ?? v.inventario.stock ?? v.cantidad
+                                                                ??
+                                                                '—' }}
                                                         </div>
                                                         <div v-else>
                                                             {{ v.cantidad ?? '—' }}
@@ -2238,15 +2531,21 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                                                     <!-- Detalles: precio, fecha, stock -->
                                                     <td class="p-2">
                                                         <div v-if="v.inventario">
-                                                            <div>Precio: <strong>{{ typeof v.inventario.precio !== 'undefined' ? formatNumber(v.inventario.precio) : '—' }}</strong>
+                                                            <div>Precio: <strong>{{ typeof v.inventario.precio !==
+                                                                'undefined' ?
+                                                                formatNumber(v.inventario.precio) : '—' }}</strong>
                                                             </div>
                                                             <div class="text-xs text-gray-500">Fecha:
-                                                                {{ v.inventario.fecha ? formatFecha(v.inventario.fecha) : '—' }}</div>
+                                                                {{ v.inventario.fecha ? formatFecha(v.inventario.fecha)
+                                                                    : '—' }}
+                                                            </div>
                                                             <div class="text-xs text-gray-500">Stock:
-                                                                {{ v.inventario.stock ?? '—'}}</div>
+                                                                {{ v.inventario.stock ?? '—' }}</div>
                                                         </div>
                                                         <div v-else>
-                                                            <div class="text-xs">{{ v.meta ? (typeof v.meta === 'object' ? JSON.stringify(v.meta) : v.meta) : '' }}</div>
+                                                            <div class="text-xs">{{ v.meta ? (typeof v.meta === 'object'
+                                                                ?
+                                                                JSON.stringify(v.meta) : v.meta) : '' }}</div>
                                                         </div>
                                                     </td>
 
@@ -2257,7 +2556,8 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                                     </div>
 
                                     <div class="mt-4 text-right text-sm text-gray-600 dark:text-gray-400">
-                                        <span><strong>Total vinculaciones:</strong> {{ vinculacionesActuales?.length ?? 0}}</span>
+                                        <span><strong>Total vinculaciones:</strong> {{ vinculacionesActuales?.length ??
+                                            0 }}</span>
                                     </div>
                                 </div>
                             </div>
@@ -2324,9 +2624,11 @@ const enviarActaAEasy = (acta, origen = 'banco') => {
                                         <!-- TOTALES EASY -->
                                         <tr class="border-t bg-gray-50 dark:bg-gray-800 font-semibold dark:text-white">
                                             <td class="p-2" colspan="2">Totales del mes — Movimientos</td>
-                                            <td class="p-2 text-black-700 dark:text-white">Total (Moneda local): {{formatNumber(egresosEasyTotal) }}</td>
+                                            <td class="p-2 text-black-700 dark:text-white">Total (Moneda local):
+                                                {{ formatNumber(egresosEasyTotal) }}</td>
                                             <td></td>
-                                            <td class="p-2 text-black-700 dark:text-white">Total (Moneda gestión): {{formatNumber(egresosgestiónEasyTotal) }}</td>
+                                            <td class="p-2 text-black-700 dark:text-white">Total (Moneda gestión):
+                                                {{ formatNumber(egresosgestiónEasyTotal) }}</td>
                                             <td colspan="9"></td>
                                         </tr>
                                     </tbody>

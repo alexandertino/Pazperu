@@ -1,14 +1,19 @@
 <script setup>
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import { ref, onMounted, defineProps } from 'vue';
+import { Head, router, usePage } from '@inertiajs/vue3';
 import axios from 'axios';
 import Swal from 'sweetalert2';
 
+const page = usePage();
+const user = usePage().props.auth.user;
 const props = defineProps({
   categorias: { type: Array, default: () => [] },
   UnidadMedida: { type: Array, default: () => [] },
   solicitantes: { type: Array, default: () => [] },
   personas: { type: Array, default: () => [] },
+  proyectos: { type: Array, default: () => [] },
+  usuarios: { type: Array, default: () => [] }, 
 });
 
 const activeTab = ref('categorias');
@@ -16,10 +21,20 @@ const categorias = ref([]);
 const unidades = ref([]);
 const solicitantes = ref([]);
 const personas = ref([]);
+const proyectos = ref([]);
+const usuarios = ref([]); // nuevo array para usuarios
 const query = ref('');
 
 const newItem = ref({ nombre: '', lugar: '', distrito: '' });
-const editing = ref({}); // { type, id, nombre, lugar?, distrito? }
+const newProyecto = ref({
+  nombre: '',
+  estado: 'pendiente',
+  descripcion: '',
+  fecha_inicio: '',
+  fecha_fin: ''
+});
+
+const editing = ref({}); // { type, id, ... }
 
 onMounted(() => {
   categorias.value = (props.categorias || []).map(x => ({ ...x }));
@@ -31,35 +46,75 @@ onMounted(() => {
     lugar: x.lugar ?? '',
     distrito: x.distrito ?? ''
   }));
+  proyectos.value = (props.proyectos || []).map(p => ({
+    id: p.id,
+    nombre: p.nombre ?? '',
+    estado: p.estado ?? '',
+    descripcion: p.descripcion ?? '',
+    fecha_inicio: p.fecha_inicio ?? '',
+    fecha_fin: p.fecha_fin ?? ''
+  }));
+  usuarios.value = (props.usuarios || []).map(u => ({
+    id: u.id,
+    name: u.name ?? '',
+    email: u.email ?? '',
+    role: u.role ?? ''
+  }));
   verificarDatos();
 });
 
 const endpointBase = `/inventario/meta`;
 
+// reset campos generales (categorias/solicitantes/etc)
 const resetNewItem = () => {
   newItem.value = { nombre: '', lugar: '', distrito: '' };
 };
 
+// reset campos proyecto
+const resetNewProyecto = () => {
+  newProyecto.value = { nombre: '', estado: 'pendiente', descripcion: '', fecha_inicio: '', fecha_fin: '' };
+};
+
 const addItem = async () => {
+  // detecta tipo
   const type = activeTab.value === 'UnidadMedida' ? 'UnidadMedida' : activeTab.value;
 
+  // No permitimos crear usuarios desde aquí
+  if (type === 'usuarios') {
+    return Swal.fire('Atención', 'La creación de usuarios se gestiona desde el módulo de usuarios del sistema.', 'info');
+  }
+
+  // validaciones básicas
   if (type === 'personas') {
     if (!newItem.value.nombre.trim()) return Swal.fire('Error', 'Escribe el nombre', 'warning');
+  } else if (type === 'proyectos') {
+    if (!newProyecto.value.nombre || !String(newProyecto.value.nombre).trim()) return Swal.fire('Error', 'Escribe el nombre del proyecto', 'warning');
+    // opcional: validar fechas aquí
   } else {
     if (!newItem.value.nombre || !String(newItem.value.nombre).trim()) return Swal.fire('Error', 'Escribe un nombre', 'warning');
   }
 
   try {
     let payload = { type };
+
     if (type === 'personas') {
       payload = { ...payload, nombre: newItem.value.nombre, lugar: newItem.value.lugar, distrito: newItem.value.distrito };
+    } else if (type === 'proyectos') {
+      payload = {
+        ...payload,
+        nombre: newProyecto.value.nombre,
+        estado: newProyecto.value.estado,
+        descripcion: newProyecto.value.descripcion,
+        fecha_inicio: newProyecto.value.fecha_inicio,
+        fecha_fin: newProyecto.value.fecha_fin
+      };
     } else {
       payload = { ...payload, nombre: newItem.value.nombre };
     }
 
     const res = await axios.post(endpointBase, payload);
 
-    // Respuesta del store en tu controlador: { id, item/persona } o similar.
+    // manejar respuesta según tipo
     if (type === 'personas') {
       const item = {
         id: res.data.id,
@@ -68,18 +123,33 @@ const addItem = async () => {
         distrito: res.data.persona?.distrito ?? newItem.value.distrito ?? ''
       };
       personas.value.unshift(item);
+      resetNewItem();
     } else if (type === 'categorias') {
       const nombre = res.data.item?.nombre ?? newItem.value.nombre;
       categorias.value.unshift({ id: res.data.id, nombre });
+      resetNewItem();
     } else if (type === 'UnidadMedida') {
       const nombre = res.data.item?.nombre ?? newItem.value.nombre;
       unidades.value.unshift({ id: res.data.id, nombre });
-    } else {
+      resetNewItem();
+    } else if (type === 'solicitantes') {
       const nombre = res.data.item?.nombre ?? newItem.value.nombre;
       solicitantes.value.unshift({ id: res.data.id, nombre });
+      resetNewItem();
+    } else if (type === 'proyectos') {
+      const p = res.data.proyecto ?? {};
+      const item = {
+        id: res.data.id ?? p.id,
+        nombre: p.nombre ?? newProyecto.value.nombre,
+        estado: p.estado ?? newProyecto.value.estado,
+        descripcion: p.descripcion ?? newProyecto.value.descripcion,
+        fecha_inicio: p.fecha_inicio ?? newProyecto.value.fecha_inicio,
+        fecha_fin: p.fecha_fin ?? newProyecto.value.fecha_fin
+      };
+      proyectos.value.unshift(item);
+      resetNewProyecto();
     }
 
-    resetNewItem();
     Swal.fire('OK', 'Creado', 'success');
   } catch (err) {
     console.error(err);
@@ -90,6 +160,19 @@ const addItem = async () => {
 const startEdit = (type, item) => {
   if (type === 'personas') {
     editing.value = { type, id: item.id, nombre: item.nombre ?? '', lugar: item.lugar ?? '', distrito: item.distrito ?? '' };
+  } else if (type === 'proyectos') {
+    editing.value = {
+      type,
+      id: item.id,
+      nombre: item.nombre ?? '',
+      estado: item.estado ?? '',
+      descripcion: item.descripcion ?? '',
+      fecha_inicio: item.fecha_inicio ?? '',
+      fecha_fin: item.fecha_fin ?? ''
+    };
+  } else if (type === 'usuarios') {
+    // Solo permitimos editar role
+    editing.value = { type, id: item.id, role: item.role ?? '' };
   } else {
     editing.value = { type, id: item.id, nombre: item.nombre ?? '' };
   }
@@ -112,6 +195,33 @@ const saveEdit = async () => {
         personas.value[idx].nombre = editing.value.nombre;
         personas.value[idx].lugar = editing.value.lugar;
         personas.value[idx].distrito = editing.value.distrito;
+      }
+    } else if (type === 'proyectos') {
+      await axios.put(`${endpointBase}/${type}/${editing.value.id}`, {
+        nombre: editing.value.nombre,
+        estado: editing.value.estado,
+        descripcion: editing.value.descripcion,
+        fecha_inicio: editing.value.fecha_inicio,
+        fecha_fin: editing.value.fecha_fin
+      });
+
+      const idx = proyectos.value.findIndex(x => x.id === editing.value.id);
+      if (idx !== -1) {
+        proyectos.value[idx].nombre = editing.value.nombre;
+        proyectos.value[idx].estado = editing.value.estado;
+        proyectos.value[idx].descripcion = editing.value.descripcion;
+        proyectos.value[idx].fecha_inicio = editing.value.fecha_inicio;
+        proyectos.value[idx].fecha_fin = editing.value.fecha_fin;
+      }
+    } else if (type === 'usuarios') {
+      // Solo actualizar role
+      await axios.put(`${endpointBase}/${type}/${editing.value.id}`, {
+        role: editing.value.role
+      });
+
+      const idx = usuarios.value.findIndex(x => x.id === editing.value.id);
+      if (idx !== -1) {
+        usuarios.value[idx].role = editing.value.role;
       }
     } else {
       await axios.put(`${endpointBase}/${type}/${editing.value.id}`, {
@@ -137,9 +247,15 @@ const saveEdit = async () => {
 const cancelEdit = () => editing.value = {};
 
 const removeItem = async (type, item) => {
+  // Por seguridad no habilitamos borrar usuarios desde aquí por defecto
+  if (type === 'usuarios') {
+    return Swal.fire('Prohibido', 'Eliminar usuarios desde este panel no está permitido.', 'info');
+  }
+
+  const label = type === 'personas' ? (item.nombre + ' - ' + (item.lugar ?? '')) : item.nombre;
   const ok = await Swal.fire({
     title: 'Confirmar borrado',
-    text: `Eliminar "${type === 'personas' ? item.nombre + ' - ' + (item.lugar ?? '') : item.nombre}"?`,
+    text: `Eliminar "${label}"?`,
     icon: 'warning',
     showCancelButton: true,
     confirmButtonText: 'Sí, eliminar'
@@ -153,6 +269,7 @@ const removeItem = async (type, item) => {
     else if (type === 'UnidadMedida') unidades.value = unidades.value.filter(x => x.id !== item.id);
     else if (type === 'solicitantes') solicitantes.value = solicitantes.value.filter(x => x.id !== item.id);
     else if (type === 'personas') personas.value = personas.value.filter(x => x.id !== item.id);
+    else if (type === 'proyectos') proyectos.value = proyectos.value.filter(x => x.id !== item.id);
 
     Swal.fire('OK', 'Eliminado', 'success');
   } catch (err) {
@@ -167,10 +284,15 @@ const filteredList = (tab) => {
   const list = tab === 'categorias' ? categorias.value
     : tab === 'UnidadMedida' ? unidades.value
       : tab === 'solicitantes' ? solicitantes.value
-        : personas.value;
+        : tab === 'personas' ? personas.value
+          : tab === 'proyectos' ? proyectos.value
+            : usuarios.value;
 
   if (!q) return list;
-  return list.filter(it => (it.nombre || '').toString().toLowerCase().includes(q) || (it.lugar || '').toString().toLowerCase().includes(q) || (it.distrito || '').toString().toLowerCase().includes(q));
+  return list.filter(it =>
+    ((it.nombre || '') + ' ' + (it.descripcion || '') + ' ' + (it.lugar || '') + ' ' + (it.distrito || '') + ' ' + (it.estado || '') + ' ' + (it.fecha_inicio || '') + ' ' + (it.fecha_fin || '') + ' ' + (it.name || '') + ' ' + (it.email || '') + ' ' + (it.role || ''))
+      .toString().toLowerCase().includes(q)
+  );
 };
 
 const mostrarBoton = ref(false);
@@ -178,14 +300,20 @@ const mostrarBoton = ref(false);
 // Verificar si ya existen datos iniciales en la base
 const verificarDatos = async () => {
   try {
-    // Usamos endpointBase para consistencia con el resto del componente
     const { data } = await axios.get(endpointBase);
 
     const tieneCategorias = data.categorias?.length > 0;
     const tieneUnidades = data.UnidadMedida?.length > 0;
     const tieneSolicitantes = data.solicitantes?.length > 0;
+    const tieneProyectos = data.proyectos?.length > 0;
+    const tieneUsuarios = data.usuarios?.length > 0;
 
-    mostrarBoton.value = !(tieneCategorias || tieneUnidades || tieneSolicitantes);
+    mostrarBoton.value = !(tieneCategorias || tieneUnidades || tieneSolicitantes || tieneProyectos || tieneUsuarios);
+
+    // Si el endpoint devuelve usuarios (cuando se llama desde index/manage), sincronizamos
+    if (Array.isArray(data.usuarios)) {
+      usuarios.value = data.usuarios.map(u => ({ id: u.id, name: u.name ?? '', email: u.email ?? '', role: u.role ?? '' }));
+    }
   } catch (error) {
     console.error('Error al verificar datos iniciales:', error);
     mostrarBoton.value = false;
@@ -198,14 +326,12 @@ const insertarDatosIniciales = async () => {
     const res = await axios.post(`${endpointBase}/insert-initial`);
     console.log('Datos insertados:', res.data);
 
-    // Si el backend devuelve un objeto 'result' con arrays { categorias, unidades_medida, solicitantes }
     const result = res.data.result || res.data.inserted || null;
 
     if (result) {
       // categorias
       if (Array.isArray(result.categorias)) {
         for (const c of result.categorias) {
-          // c puede ser { id, nombre, skipped }
           const exists = categorias.value.some(x => x.id === c.id || (x.nombre && x.nombre === c.nombre));
           if (!exists && !c.skipped) {
             categorias.value.unshift({ id: c.id, nombre: c.nombre });
@@ -213,7 +339,7 @@ const insertarDatosIniciales = async () => {
         }
       }
 
-      // unidades_medida (puede venir en result.unidades_medida)
+      // unidades_medida
       const unidadesKey = result.unidades_medida || result.unidades || result.UnidadMedida;
       if (Array.isArray(unidadesKey)) {
         for (const u of unidadesKey) {
@@ -233,6 +359,33 @@ const insertarDatosIniciales = async () => {
           }
         }
       }
+
+      // proyectos
+      if (Array.isArray(result.proyectos)) {
+        for (const p of result.proyectos) {
+          const exists = proyectos.value.some(x => x.id === p.id || (x.nombre && x.nombre === p.nombre));
+          if (!exists && !p.skipped) {
+            proyectos.value.unshift({
+              id: p.id,
+              nombre: p.nombre,
+              estado: p.estado ?? '',
+              descripcion: p.descripcion ?? '',
+              fecha_inicio: p.fecha_inicio ?? '',
+              fecha_fin: p.fecha_fin ?? ''
+            });
+          }
+        }
+      }
+
+      // usuarios (opcional si el backend devuelve)
+      if (Array.isArray(result.usuarios)) {
+        for (const u of result.usuarios) {
+          const exists = usuarios.value.some(x => x.id === u.id || (x.email && x.email === u.email));
+          if (!exists && !u.skipped) {
+            usuarios.value.unshift({ id: u.id, name: u.name ?? '', email: u.email ?? '', role: u.role ?? '' });
+          }
+        }
+      }
     }
 
     mostrarBoton.value = false;
@@ -242,13 +395,28 @@ const insertarDatosIniciales = async () => {
     Swal.fire('Error', '❌ Error al insertar datos iniciales', 'error');
   }
 };
+
+// Función para refrescar solo usuarios desde el servidor (útil después de cambios)
+const refreshUsuarios = async () => {
+  try {
+    const { data } = await axios.get(endpointBase);
+    if (Array.isArray(data.usuarios)) {
+      usuarios.value = data.usuarios.map(u => ({ id: u.id, name: u.name ?? '', email: u.email ?? '', role: u.role ?? '' }));
+      Swal.fire('OK', 'Usuarios actualizados', 'success');
+    } else {
+      Swal.fire('Info', 'No se encontraron usuarios en la respuesta del servidor', 'info');
+    }
+  } catch (err) {
+    console.error(err);
+    Swal.fire('Error', 'No se pudo actualizar usuarios', 'error');
+  }
+};
 </script>
 
 <template>
   <AuthenticatedLayout>
-    <div class="mt-10">
-      <div
-        class="max-w-6xl mx-auto p-6 bg-white dark:bg-gray-900 rounded-xl shadow-lg dark:shadow-gray-800 dark:text-white">
+    <div v-if="user.role === 'admin'" class="mt-10">
+      <div class="max-w-6xl mx-auto p-6 bg-white dark:bg-gray-900 rounded-xl shadow-lg dark:shadow-gray-800 dark:text-white">
         <header class="flex items-center gap-4 mb-6">
           <div class="flex items-center gap-3">
             <div>
@@ -264,7 +432,7 @@ const insertarDatosIniciales = async () => {
                 </p>
               </div>
               <p class="text-sm text-muted-foreground dark:text-gray-400">
-                Categorías, Unidades, Solicitantes y Personas — administración rápida y segura
+                Categorías, Unidades, Solicitantes, Personas, Proyectos y Usuarios — administración rápida y segura
               </p>
             </div>
           </div>
@@ -329,41 +497,82 @@ const insertarDatosIniciales = async () => {
               {{ personas.length }}
             </span>
           </button>
+
+          <button @click="activeTab = 'proyectos'" :class="[
+            'px-4 py-2 rounded-lg text-sm font-medium transition-colors',
+            activeTab === 'proyectos'
+              ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow'
+              : 'bg-white border dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200 hover:dark:bg-gray-700'
+          ]">
+            Proyectos
+            <span class="ml-2 text-xs text-muted-foreground dark:text-gray-400">
+              {{ proyectos.length }}
+            </span>
+          </button>
+
+          <button @click="activeTab = 'usuarios'" :class="[
+            'px-4 py-2 rounded-lg text-sm font-medium transition-colors',
+            activeTab === 'usuarios'
+              ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow'
+              : 'bg-white border dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200 hover:dark:bg-gray-700'
+          ]">
+            Usuarios
+            <span class="ml-2 text-xs text-muted-foreground dark:text-gray-400">
+              {{ usuarios.length }}
+            </span>
+          </button>
         </nav>
 
         <!-- form -->
         <section class="mb-6 bg-white border rounded-lg p-4 shadow-sm dark:bg-gray-800 dark:border-gray-700">
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
-            <div>
-              <label class="text-xs text-muted-foreground dark:text-gray-400">Nombre</label>
-              <input v-model="newItem.nombre" placeholder="Nombre..." class="mt-1 p-2 border rounded-lg w-full
-                   dark:bg-gray-900 dark:border-gray-700 dark:text-gray-100
-                   dark:placeholder-gray-400" />
+          <div v-if="activeTab === 'proyectos'">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <!-- aquí podrías colocar inputs específicos para proyectos si quieres -->
             </div>
+          </div>
 
-            <div v-if="activeTab === 'personas'">
-              <label class="text-xs text-muted-foreground dark:text-gray-400">Lugar</label>
-              <input v-model="newItem.lugar" placeholder="Lugar..." class="mt-1 p-2 border rounded-lg w-full
-                   dark:bg-gray-900 dark:border-gray-700 dark:text-gray-100
-                   dark:placeholder-gray-400" />
+          <div v-else-if="activeTab === 'usuarios'">
+            <div class="p-3 rounded bg-yellow-50 dark:bg-yellow-900/20 border mb-3">
+              <p class="text-sm">La creación y eliminación de usuarios se gestiona desde el módulo de usuarios del sistema. Aquí solo puedes editar el <strong>role</strong> de cada usuario.</p>
             </div>
-
-            <div v-if="activeTab === 'personas'">
-              <label class="text-xs text-muted-foreground dark:text-gray-400">Distrito</label>
-              <input v-model="newItem.distrito" placeholder="Distrito..." class="mt-1 p-2 border rounded-lg w-full
-                   dark:bg-gray-900 dark:border-gray-700 dark:text-gray-100
-                   dark:placeholder-gray-400" />
+            <div class="flex justify-end gap-2">
+              <button @click="refreshUsuarios" class="px-3 py-2 rounded-lg border bg-white hover:bg-gray-50 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-100">🔄 Refrescar usuarios</button>
             </div>
+          </div>
 
-            <div class="flex gap-2 sm:col-span-3 justify-end">
-              <button @click="addItem"
-                class="px-4 py-2 rounded-lg bg-green-600 text-white font-medium shadow hover:bg-green-700">
-                Agregar
-              </button>
-              <button v-if="activeTab === 'personas'" @click="resetNewItem"
-                class="px-4 py-2 rounded-lg border dark:border-gray-600 dark:text-gray-200 hover:dark:bg-gray-700">
-                Limpiar
-              </button>
+          <div v-else>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+              <div>
+                <label class="text-xs text-muted-foreground dark:text-gray-400">Nombre</label>
+                <input v-model="newItem.nombre" placeholder="Nombre..." class="mt-1 p-2 border rounded-lg w-full
+                     dark:bg-gray-900 dark:border-gray-700 dark:text-gray-100
+                     dark:placeholder-gray-400" />
+              </div>
+
+              <div v-if="activeTab === 'personas'">
+                <label class="text-xs text-muted-foreground dark:text-gray-400">Lugar</label>
+                <input v-model="newItem.lugar" placeholder="Lugar..." class="mt-1 p-2 border rounded-lg w-full
+                     dark:bg-gray-900 dark:border-gray-700 dark:text-gray-100
+                     dark:placeholder-gray-400" />
+              </div>
+
+              <div v-if="activeTab === 'personas'">
+                <label class="text-xs text-muted-foreground dark:text-gray-400">Distrito</label>
+                <input v-model="newItem.distrito" placeholder="Distrito..." class="mt-1 p-2 border rounded-lg w-full
+                     dark:bg-gray-900 dark:border-gray-700 dark:text-gray-100
+                     dark:placeholder-gray-400" />
+              </div>
+
+              <div class="flex gap-2 sm:col-span-3 justify-end">
+                <button @click="addItem"
+                  class="px-4 py-2 rounded-lg bg-green-600 text-white font-medium shadow hover:bg-green-700">
+                  Agregar
+                </button>
+                <button v-if="activeTab === 'personas'" @click="resetNewItem"
+                  class="px-4 py-2 rounded-lg border dark:border-gray-600 dark:text-gray-200 hover:dark:bg-gray-700">
+                  Limpiar
+                </button>
+              </div>
             </div>
           </div>
         </section>
@@ -373,91 +582,133 @@ const insertarDatosIniciales = async () => {
           <table class="min-w-full divide-y dark:divide-gray-700 table-fixed">
             <thead class="bg-gray-50 dark:bg-gray-700">
               <tr>
-                <th class="px-4 py-3 text-left text-sm font-medium text-muted-foreground dark:text-gray-300 w-12">
-                  #
-                </th>
-                <th class="px-4 py-3 text-left text-sm font-medium text-muted-foreground dark:text-gray-300 w-1/2">
-                  Nombre
-                </th>
-                <th v-if="activeTab === 'personas'"
-                  class="px-4 py-3 text-left text-sm font-medium text-muted-foreground dark:text-gray-300 w-32">
-                  Lugar
-                </th>
-                <th v-if="activeTab === 'personas'"
-                  class="px-4 py-3 text-left text-sm font-medium text-muted-foreground dark:text-gray-300 w-32">
-                  Distrito
-                </th>
-                <th class="px-4 py-3 text-right text-sm font-medium text-muted-foreground dark:text-gray-300 w-28">
-                  Acciones
-                </th>
+                <th class="px-4 py-3 text-left text-sm font-medium text-muted-foreground dark:text-gray-300 w-12">#</th>
+
+                <!-- columnas para usuarios -->
+                <th v-if="activeTab === 'usuarios'" class="px-4 py-3 text-left text-sm font-medium text-muted-foreground dark:text-gray-300">Nombre</th>
+                <th v-if="activeTab === 'usuarios'" class="px-4 py-3 text-left text-sm font-medium text-muted-foreground dark:text-gray-300">Email</th>
+                <th v-if="activeTab === 'usuarios'" class="px-4 py-3 text-left text-sm font-medium text-muted-foreground dark:text-gray-300 w-40">Role</th>
+
+                <!-- columnas para otros tipos -->
+                <th v-if="!['usuarios'].includes(activeTab)" class="px-4 py-3 text-left text-sm font-medium text-muted-foreground dark:text-gray-300">Nombre</th>
+
+                <th v-if="activeTab === 'personas'" class="px-4 py-3 text-left text-sm font-medium text-muted-foreground dark:text-gray-300 w-32">Lugar</th>
+                <th v-if="activeTab === 'personas'" class="px-4 py-3 text-left text-sm font-medium text-muted-foreground dark:text-gray-300 w-32">Distrito</th>
+
+                <th v-if="activeTab === 'proyectos'" class="px-4 py-3 text-left text-sm font-medium text-muted-foreground dark:text-gray-300 w-28">Estado</th>
+                <th v-if="activeTab === 'proyectos'" class="px-4 py-3 text-left text-sm font-medium text-muted-foreground dark:text-gray-300">Descripción</th>
+                <th v-if="activeTab === 'proyectos'" class="px-4 py-3 text-left text-sm font-medium text-muted-foreground dark:text-gray-300 w-32">Inicio</th>
+                <th v-if="activeTab === 'proyectos'" class="px-4 py-3 text-left text-sm font-medium text-muted-foreground dark:text-gray-300 w-32">Fin</th>
+
+                <th class="px-4 py-3 text-right text-sm font-medium text-muted-foreground dark:text-gray-300 w-28">Acciones</th>
               </tr>
             </thead>
 
             <tbody class="bg-white divide-y dark:bg-gray-800 dark:divide-gray-700">
-              <tr v-for="(item, idx) in filteredList(activeTab)" :key="item.id"
-                class="hover:bg-gray-50 dark:hover:bg-gray-700">
+              <tr v-for="(item, idx) in filteredList(activeTab)" :key="item.id" class="hover:bg-gray-50 dark:hover:bg-gray-700">
                 <td class="px-4 py-3 text-sm w-12">{{ idx + 1 }}</td>
 
-                <!-- Nombre -->
-                <td class="px-4 py-3 text-sm w-1/2">
-                  <div v-if="editing.id === item.id && editing.type === activeTab">
-                    <input v-model="editing.nombre"
-                      class="p-2 border rounded-lg w-full dark:bg-gray-900 dark:border-gray-700 dark:text-gray-100" />
-                  </div>
-                  <div v-else class="truncate">{{ item.nombre }}</div>
-                </td>
+                <!-- Usuarios row -->
+                <template v-if="activeTab === 'usuarios'">
+                  <td class="px-4 py-3 text-sm">
+                    <div class="truncate">{{ item.name }}</div>
+                  </td>
+                  <td class="px-4 py-3 text-sm">
+                    <div class="truncate">{{ item.email }}</div>
+                  </td>
+                  <td class="px-4 py-3 text-sm w-40">
+                    <div v-if="editing.id === item.id && editing.type === activeTab">
+                      <select v-model="editing.role" class="p-2 border rounded-lg w-full dark:bg-gray-900 dark:border-gray-700 dark:text-gray-100">
+                        <option value="">-- Sin role --</option>
+                        <option value="admin">admin</option>
+                        <option value="equipo">equipo</option>
+                        <option value="miembro">miembro</option>
+                        <!-- agrega/ajusta roles según tu aplicación -->
+                      </select>
+                    </div>
+                    <div v-else class="truncate">{{ item.role }}</div>
+                  </td>
+                </template>
 
-                <!-- Lugar -->
-                <td v-if="activeTab === 'personas'" class="px-4 py-3 text-sm w-32">
-                  <div v-if="editing.id === item.id && editing.type === activeTab">
-                    <input v-model="editing.lugar"
-                      class="p-2 border rounded-lg w-full dark:bg-gray-900 dark:border-gray-700 dark:text-gray-100" />
-                  </div>
-                  <div v-else class="truncate">{{ item.lugar }}</div>
-                </td>
+                <!-- Otro tipo row -->
+                <template v-else>
+                  <td class="px-4 py-3 text-sm">
+                    <div v-if="editing.id === item.id && editing.type === activeTab">
+                      <input v-model="editing.nombre" class="p-2 border rounded-lg w-full dark:bg-gray-900 dark:border-gray-700 dark:text-gray-100" />
+                    </div>
+                    <div v-else class="truncate">{{ item.nombre }}</div>
+                  </td>
 
-                <!-- Distrito -->
-                <td v-if="activeTab === 'personas'" class="px-4 py-3 text-sm w-32">
-                  <div v-if="editing.id === item.id && editing.type === activeTab">
-                    <input v-model="editing.distrito"
-                      class="p-2 border rounded-lg w-full dark:bg-gray-900 dark:border-gray-700 dark:text-gray-100" />
-                  </div>
-                  <div v-else class="truncate">{{ item.distrito }}</div>
-                </td>
+                  <td v-if="activeTab === 'personas'" class="px-4 py-3 text-sm w-32">
+                    <div v-if="editing.id === item.id && editing.type === activeTab">
+                      <input v-model="editing.lugar" class="p-2 border rounded-lg w-full dark:bg-gray-900 dark:border-gray-700 dark:text-gray-100" />
+                    </div>
+                    <div v-else class="truncate">{{ item.lugar }}</div>
+                  </td>
+
+                  <td v-if="activeTab === 'personas'" class="px-4 py-3 text-sm w-32">
+                    <div v-if="editing.id === item.id && editing.type === activeTab">
+                      <input v-model="editing.distrito" class="p-2 border rounded-lg w-full dark:bg-gray-900 dark:border-gray-700 dark:text-gray-100" />
+                    </div>
+                    <div v-else class="truncate">{{ item.distrito }}</div>
+                  </td>
+
+                  <td v-if="activeTab === 'proyectos'" class="px-4 py-3 text-sm w-28">
+                    <div v-if="editing.id === item.id && editing.type === activeTab">
+                      <select v-model="editing.estado" class="p-2 border rounded-lg w-full dark:bg-gray-900 dark:border-gray-700 dark:text-gray-100">
+                        <option value="pendiente">Pendiente</option>
+                        <option value="activo">Activo</option>
+                        <option value="completado">Completado</option>
+                        <option value="cancelado">Cancelado</option>
+                      </select>
+                    </div>
+                    <div v-else class="truncate">{{ item.estado }}</div>
+                  </td>
+
+                  <td v-if="activeTab === 'proyectos'" class="px-4 py-3 text-sm">
+                    <div v-if="editing.id === item.id && editing.type === activeTab">
+                      <input v-model="editing.descripcion" class="p-2 border rounded-lg w-full dark:bg-gray-900 dark:border-gray-700 dark:text-gray-100" />
+                    </div>
+                    <div v-else class="truncate">{{ item.descripcion }}</div>
+                  </td>
+
+                  <td v-if="activeTab === 'proyectos'" class="px-4 py-3 text-sm w-32">
+                    <div v-if="editing.id === item.id && editing.type === activeTab">
+                      <input v-model="editing.fecha_inicio" type="date" class="p-2 border rounded-lg w-full dark:bg-gray-900 dark:border-gray-700 dark:text-gray-100" />
+                    </div>
+                    <div v-else class="truncate">{{ item.fecha_inicio }}</div>
+                  </td>
+
+                  <td v-if="activeTab === 'proyectos'" class="px-4 py-3 text-sm w-32">
+                    <div v-if="editing.id === item.id && editing.type === activeTab">
+                      <input v-model="editing.fecha_fin" type="date" class="p-2 border rounded-lg w-full dark:bg-gray-900 dark:border-gray-700 dark:text-gray-100" />
+                    </div>
+                    <div v-else class="truncate">{{ item.fecha_fin }}</div>
+                  </td>
+                </template>
 
                 <!-- Acciones -->
                 <td class="px-4 py-3 text-right text-sm w-28">
                   <div v-if="editing.id === item.id && editing.type === activeTab" class="flex justify-end gap-2">
-                    <button @click="saveEdit" class="px-3 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700">
-                      Guardar
-                    </button>
-                    <button @click="cancelEdit"
-                      class="px-3 py-1 rounded-lg border dark:border-gray-600 dark:text-gray-200 hover:dark:bg-gray-700">
-                      Cancelar
-                    </button>
+                    <button @click="saveEdit" class="px-3 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700">Guardar</button>
+                    <button @click="cancelEdit" class="px-3 py-1 rounded-lg border dark:border-gray-600 dark:text-gray-200 hover:dark:bg-gray-700">Cancelar</button>
                   </div>
 
                   <div v-else class="flex justify-end gap-2">
-                    <button @click="startEdit(activeTab, item)"
-                      class="px-3 py-1 rounded-lg bg-yellow-400 hover:bg-yellow-500">
-                      Editar
-                    </button>
-                    <button @click="removeItem(activeTab, item)"
-                      class="px-3 py-1 rounded-lg bg-red-600 text-white hover:bg-red-700">
-                      Eliminar
-                    </button>
+                    <button @click="startEdit(activeTab, item)" class="px-3 py-1 rounded-lg bg-yellow-400 hover:bg-yellow-500">Editar</button>
+                    <!-- eliminar solo para tabs no-usuarios -->
+                    <button v-if="activeTab !== 'usuarios'" @click="removeItem(activeTab, item)" class="px-3 py-1 rounded-lg bg-red-600 text-white hover:bg-red-700">Eliminar</button>
                   </div>
                 </td>
               </tr>
 
               <tr v-if="(filteredList(activeTab) || []).length === 0">
-                <td colspan="5" class="px-4 py-6 text-center text-sm text-muted-foreground dark:text-gray-400">
+                <td :colspan="activeTab === 'usuarios' ? 4 : 8" class="px-4 py-6 text-center text-sm text-muted-foreground dark:text-gray-400">
                   No hay registros
                 </td>
               </tr>
             </tbody>
           </table>
-
         </div>
       </div>
     </div>

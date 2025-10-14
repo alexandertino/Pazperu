@@ -19,7 +19,7 @@ const form = reactive({
   fecha: new Date().toISOString().slice(0, 10),
   producto_code: '',
   producto_label: '',
-  cantidad: 1,
+  cantidad: '',
   um: ''
 });
 
@@ -28,12 +28,21 @@ const productos = ref([]);
 const draft = ref([]);
 const productoEncontrado = ref(null);
 
-/* Inventario modal */
+/* Inventario modal + filtros reducidos (sin Orden / Mostrar / Stock≥) */
 const showInventoryModal = ref(false);
-const inventoryFilter = reactive({ q: '' });
+const inventoryFilter = reactive({
+  q: '',
+  solicitado_por: '',
+  categoria: '',
+  onlyAvailable: true
+});
 const inventory = ref([]);
 const inventoryLoading = ref(false);
 const inventoryError = ref(null);
+
+/* opciones derivadas (para selects) */
+const inventoryCategorias = ref([]);
+const inventorySolicitantes = ref([]);
 
 /* UI predictivos */
 const mostrarPersonas = ref(false);
@@ -48,9 +57,14 @@ const normalizeProduct = (p = {}) => ({
   stock: (typeof p.stock !== 'undefined')
     ? Number(p.stock)
     : (typeof p.cantidad !== 'undefined' ? Number(p.cantidad) : null),
+  solicitado_por: (p.solicitado_por || p.solicitante || p.requested_by || '')?.toString(),
+  categoria: (p.categoria || p.categoria_id || p.category || '')?.toString(),
   raw: p
 });
 
+const volverATabla = () => {
+  window.location.href = `/proyectos/${props.proyecto.id}/inventario-salidas`;
+};
 
 const codigoGenerado = computed(() => {
   const c1 = String(form.codigo1 || '').padStart(3, '0');
@@ -73,6 +87,7 @@ axios.interceptors.response.use((res) => res, (err) => Promise.reject(err));
 /* ---------- carga inicial (no asignamos nombre por defecto) ---------- */
 onMounted(async () => {
   try {
+    // Personas
     const res = await axios.get('/personas');
     personas.value = Array.isArray(res.data) ? res.data : (res.data?.personas || []);
   } catch (e) {
@@ -80,15 +95,33 @@ onMounted(async () => {
   }
 
   try {
+    // Productos del proyecto
     const r2 = await axios.get(`/proyectos/${props.proyecto.id}/productos`);
     productos.value = Array.isArray(r2.data) ? r2.data.map(normalizeProduct) : [];
   } catch (e) {
     productos.value = [];
   }
 
-  // No asignamos persona_id ni nombre por defecto: el usuario decide o será creada por el backend.
-  if (!form.codigo2 || String(form.codigo2).trim() === '') form.codigo2 = String(new Date().getFullYear());
+  // 🔹 Nombre del usuario autenticado
+  if (user && user.name) {
+    form.nombre = user.name;
+  }
+
+  // 🔹 Código 2 = año actual (por defecto)
+  if (!form.codigo2 || String(form.codigo2).trim() === '') {
+    form.codigo2 = String(new Date().getFullYear());
+  }
+
+  // 🔹 Obtener siguiente código autoincrementado
+  try {
+    const { data } = await axios.get('/salidas/ultimo-codigo');
+    form.codigo1 = data.siguiente || 1;
+  } catch (e) {
+    form.codigo1 = 1; // Fallback si falla
+  }
 });
+
+
 
 /* ---------- Personas predictivo ---------- */
 const personasFiltradas = computed(() => {
@@ -101,7 +134,6 @@ const personasFiltradas = computed(() => {
 
 const onPersonaInput = (e) => {
   form.nombre = e?.target?.value ?? form.nombre;
-  // cuando escribes no asignamos persona_id automáticamente — si quieres autocompletar remoto, podríamos hacer petición aquí.
   form.persona_id = null;
   mostrarPersonas.value = String(form.nombre || '').trim().length > 0;
 };
@@ -118,27 +150,7 @@ const seleccionarPersona = (p) => {
     if (el) el.focus();
   });
 };
-const filteredInventory = computed(() => {
-  const q = String(inventoryFilter.q || '').toLowerCase().trim();
 
-  return inventory.value
-    .filter(item => {
-      // Excluir explícitamente cuando stock === 0 (mostrar si stock es null/undefined o >0)
-      if (typeof item.stock !== 'undefined' && Number(item.stock) === 0) return false;
-      return true;
-    })
-    .filter(item => {
-      if (!q) return true; // si no hay búsqueda, todo (con stock !== 0) pasa
-      const hay = (
-        (item.producto || '') +
-        ' ' +
-        (item.descripcion || '') +
-        ' ' +
-        (String(item.code || item.id || '') || '')
-      ).toLowerCase();
-      return hay.includes(q);
-    });
-});
 /* ---------- Productos predictivo (local) ---------- */
 const productosFiltrados = computed(() => {
   const q = String(form.producto_code || '').toLowerCase().trim();
@@ -183,29 +195,61 @@ const findProductByCode = (code) => {
 };
 
 const addToDraft = () => {
-  if (!form.producto_code && !form.producto_label) { Swal.fire('Falta producto', 'Selecciona o escribe un producto.', 'warning'); return; }
-  if (!form.cantidad || Number(form.cantidad) <= 0) { Swal.fire('Cantidad inválida', 'La cantidad debe ser mayor a 0.', 'warning'); return; }
+  if (!form.producto_code && !form.producto_label) {
+    Swal.fire('Falta producto', 'Selecciona o escribe un producto.', 'warning');
+    return;
+  }
+  if (!form.cantidad || Number(form.cantidad) <= 0) {
+    Swal.fire('Cantidad inválida', 'La cantidad debe ser mayor a 0.', 'warning');
+    return;
+  }
+
+  // buscar producto conocido (si fue seleccionado del inventario)
   const prodFound = findProductByCode(form.producto_code || form.producto_label);
-  const prod = prodFound || { code: (form.producto_code || form.producto_label), producto: (form.producto_label || form.producto_code || '—'), descripcion: '', um: (form.um || 'UNIDAD'), stock: Infinity };
-  const unit = prod.um || form.um || 'UNIDAD';
-  const existing = draft.value.find(d => (String(d.producto_code) === String(prod.code || prod.producto)) && d.um === unit);
+  const prod = prodFound || (productoEncontrado.value ? productoEncontrado.value : null);
+  const prodStock = prod ? (typeof prod.stock === 'number' ? Number(prod.stock) : null) : null;
+
+  // calcular cantidad ya en borrador para este producto+um
+  const unit = (prod && prod.um) ? prod.um : (form.um || 'UNIDAD');
+  const prodCodeKey = (prod && prod.code) ? String(prod.code) : String(form.producto_code || form.producto_label);
+  const existing = draft.value.find(d => String(d.producto_code) === prodCodeKey && d.um === unit);
+  const cantidadEnDraft = existing ? Number(existing.cantidad || 0) : 0;
+  const nuevoTotal = cantidadEnDraft + Number(form.cantidad);
+
+  // si hay stock conocido, validar
+  if (prodStock !== null && !Number.isNaN(prodStock)) {
+    if (nuevoTotal > prodStock) {
+      Swal.fire('Stock insuficiente', `Disponibles: ${prodStock - cantidadEnDraft} (stock total ${prodStock}). No puedes agregar ${form.cantidad} más.`, 'warning');
+      return;
+    }
+  }
+
+  // proceder a agregar (mismo comportamiento que antes)
   if (existing) existing.cantidad = Number(existing.cantidad) + Number(form.cantidad);
   else draft.value.push({
     id: uid(),
-    producto_code: prod.code || prod.producto,
-    producto: prod.producto || prod.descripcion || prod.code,
-    producto_label: form.producto_label || prod.producto || prod.descripcion || prod.code,
-    descripcion: prod.descripcion || '',
+    producto_code: prod ? (prod.code || prod.producto) : (form.producto_code || form.producto_label),
+    producto: prod ? (prod.producto || prod.descripcion || prod.code) : (form.producto_label || form.producto_code || '—'),
+    producto_label: form.producto_label || (prod ? (prod.producto || prod.descripcion) : ''),
+    descripcion: prod ? (prod.descripcion || '') : '',
     um: unit,
     cantidad: Number(form.cantidad)
   });
-  Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `Agregado: ${prod.producto || prod.descripcion} — ${form.cantidad} ${unit}`, timer: 1200, showConfirmButton: false });
+
+  Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `Agregado: ${form.producto_label || (prod && prod.producto) || ''} — ${form.cantidad} ${unit}`, timer: 1200, showConfirmButton: false });
   resetProductFields();
   nextTick(() => { const el = document.querySelector('#producto_code'); if (el) el.focus(); });
 };
 
+
 const editDraftItem = (id) => {
-  const it = draft.value.find(d => d.id === id); if (!it) return;
+  const it = draft.value.find(d => d.id === id);
+  if (!it) return;
+
+  // intentar localizar producto en inventario para conocer stock
+  const found = findProductByCode(it.producto_code);
+  const prodStock = found ? (typeof found.stock === 'number' ? Number(found.stock) : null) : null;
+
   Swal.fire({
     title: `Editar ${it.producto}`,
     html: `<label class="swal2-label">Cantidad</label><input id="swal-cant" type="number" min="0.0001" step="0.0001" value="${it.cantidad}" class="swal2-input"><label class="swal2-label">Unidad (UM)</label><input id="swal-um" type="text" value="${it.um}" class="swal2-input">`,
@@ -213,9 +257,28 @@ const editDraftItem = (id) => {
       const v = Number(document.getElementById('swal-cant').value || 0);
       const um = document.getElementById('swal-um').value || 'UNIDAD';
       if (!v || v <= 0) Swal.showValidationMessage('Cantidad inválida');
+
+      // calcular cantidad total en draft para este producto (sumando otros items excepto el que editamos)
+      const cantidadOtros = draft.value.reduce((s, d) => {
+        if (d.id === id) return s;
+        if (String(d.producto_code) === String(it.producto_code) && d.um === um) return s + Number(d.cantidad || 0);
+        return s;
+      }, 0);
+      const totalPropuesto = cantidadOtros + v;
+
+      if (prodStock !== null && !Number.isNaN(prodStock) && totalPropuesto > prodStock) {
+        Swal.showValidationMessage(`Stock insuficiente. Disponibles: ${prodStock - cantidadOtros} (stock total ${prodStock}).`);
+      }
+
       return { v, um };
     }
-  }).then(res => { if (res.isConfirmed) { it.cantidad = Number(res.value.v); it.um = res.value.um; Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Actualizado', timer: 1000, showConfirmButton: false }); } });
+  }).then(res => {
+    if (res.isConfirmed) {
+      it.cantidad = Number(res.value.v);
+      it.um = res.value.um;
+      Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Actualizado', timer: 1000, showConfirmButton: false });
+    }
+  });
 };
 
 const removeDraftItem = (id) => {
@@ -306,7 +369,94 @@ const incrementCombinedCode2 = (delta = 1) => {
   setCombinedCodeFromNumber2(nxt);
 };
 
-/* ----------------- acta PDF (v2) ------------------------*/
+/* ---------- Inventario helpers ---------- */
+const debounce = (fn, wait = 300) => {
+  let t = null;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), wait); };
+};
+
+const fetchInventory = async (query = '') => {
+  inventoryLoading.value = true;
+  inventoryError.value = null;
+  try {
+    const url = `/proyectos/${props.proyecto.id}/productos${query ? ('?q=' + encodeURIComponent(query)) : ''}`;
+    const res = await axios.get(url);
+    inventory.value = Array.isArray(res.data) ? res.data.map(normalizeProduct) : [];
+
+    // poblar opciones de filtros (sin duplicados)
+    const cats = new Set();
+    const sols = new Set();
+    inventory.value.forEach(i => { if (i.categoria) cats.add(String(i.categoria)); if (i.solicitado_por) sols.add(String(i.solicitado_por)); });
+    inventoryCategorias.value = Array.from(cats).sort();
+    inventorySolicitantes.value = Array.from(sols).sort();
+  } catch (err) {
+    inventoryError.value = err?.response?.data?.message || err?.message || 'Error';
+    inventory.value = [];
+    inventoryCategorias.value = [];
+    inventorySolicitantes.value = [];
+  } finally {
+    inventoryLoading.value = false;
+  }
+};
+
+const debouncedFetchInventory = debounce((q) => { fetchInventory(q); }, 300);
+const openInventory = async () => { showInventoryModal.value = true; inventoryFilter.q = ''; await nextTick(); fetchInventory(); };
+const closeInventory = () => { showInventoryModal.value = false; };
+const selectInventoryProduct = (p) => {
+  const normalized = (p && p.code) ? p : normalizeProduct(p);
+  form.producto_code = normalized.code || normalized.id || '';
+  form.producto_label = normalized.producto || normalized.descripcion || '';
+  form.um = normalized.um || form.um;
+  productoEncontrado.value = normalized;
+  showInventoryModal.value = false;
+  nextTick(() => { const el = document.querySelector('#producto_code'); if (el) el.focus(); });
+};
+
+// filtros robustos: evita bugs cuando categoria/solicitante son null/undefined
+const filteredInventory = computed(() => {
+  const q = String(inventoryFilter.q || '').toLowerCase().trim();
+  const cat = String(inventoryFilter.categoria || '').toLowerCase().trim();
+  const sol = String(inventoryFilter.solicitado_por || '').toLowerCase().trim();
+  const onlyAvailable = Boolean(inventoryFilter.onlyAvailable);
+
+  let arr = inventory.value.filter(item => {
+    // Normalizar campos defensivamente
+    const stockVal = (typeof item.stock !== 'undefined' && item.stock !== null) ? Number(item.stock) : null;
+
+    if (onlyAvailable && stockVal !== null && stockVal <= 0) return false; // excluir cuando stock 0
+
+    if (cat && !(String(item.categoria || '').toLowerCase().includes(cat))) return false;
+    if (sol && !(String(item.solicitado_por || '').toLowerCase().includes(sol))) return false;
+
+    if (!q) return true;
+    const hay = (
+      (item.producto || '') + ' ' +
+      (item.descripcion || '') + ' ' +
+      (String(item.code || item.id || '') || '') + ' ' +
+      (String(item.categoria || '') || '') + ' ' +
+      (String(item.solicitado_por || '') || '')
+    ).toLowerCase();
+    return hay.includes(q);
+  });
+
+  return arr;
+});
+
+watch(() => inventoryFilter.q, (q) => { debouncedFetchInventory(String(q || '').trim()); });
+
+const scheduleHidePersonas = () => {
+  window.setTimeout(() => {
+    mostrarPersonas.value = false;
+  }, 180);
+};
+
+const scheduleHideSugerencias = () => {
+  window.setTimeout(() => {
+    mostrarSugerencias.value = false;
+  }, 180);
+};
+
+
 function actaPdf_escapeHtml(unsafe) {
   if (unsafe === null || typeof unsafe === 'undefined') return '';
   return String(unsafe)
@@ -316,6 +466,8 @@ function actaPdf_escapeHtml(unsafe) {
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#039;');
 }
+
+/* ----------------- acta PDF -------------------------*/
 const html = actaPdf2_generateActaHTML({
   logoData: '/images/logo.png'
 });
@@ -628,63 +780,12 @@ async function actaPdf2_downloadPdfFile() {
     try { document.body.removeChild(container); } catch (e) { }
   }
 }
-
-
-/* ---------- Inventario helpers ---------- */
-const debounce = (fn, wait = 300) => {
-  let t = null;
-  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), wait); };
-};
-
-const fetchInventory = async (query = '') => {
-  inventoryLoading.value = true;
-  inventoryError.value = null;
-  try {
-    const url = `/proyectos/${props.proyecto.id}/productos${query ? ('?q=' + encodeURIComponent(query)) : ''}`;
-    const res = await axios.get(url);
-    inventory.value = Array.isArray(res.data) ? res.data.map(normalizeProduct) : [];
-  } catch (err) {
-    inventoryError.value = err?.response?.data?.message || err?.message || 'Error';
-    inventory.value = [];
-  } finally {
-    inventoryLoading.value = false;
-  }
-};
-
-const debouncedFetchInventory = debounce((q) => { fetchInventory(q); }, 300);
-const openInventory = async () => { showInventoryModal.value = true; inventoryFilter.q = ''; await nextTick(); fetchInventory(); };
-const closeInventory = () => { showInventoryModal.value = false; };
-const selectInventoryProduct = (p) => {
-  const normalized = (p && p.code) ? p : normalizeProduct(p);
-  form.producto_code = normalized.code || normalized.id || '';
-  form.producto_label = normalized.producto || normalized.descripcion || '';
-  form.um = normalized.um || form.um;
-  productoEncontrado.value = normalized;
-  showInventoryModal.value = false;
-  nextTick(() => { const el = document.querySelector('#producto_code'); if (el) el.focus(); });
-};
-
-/* watch inventory filter */
-watch(() => inventoryFilter.q, (q) => { debouncedFetchInventory(String(q || '').trim()); });
-
-const scheduleHidePersonas = () => {
-  // usamos window.setTimeout por claridad y acceso global
-  window.setTimeout(() => {
-    mostrarPersonas.value = false;
-  }, 180);
-};
-
-const scheduleHideSugerencias = () => {
-  window.setTimeout(() => {
-    mostrarSugerencias.value = false;
-  }, 180);
-};
 </script>
 
 <template>
   <AuthenticatedLayout>
     <div class="max-w-7xl mx-auto p-6">
-      <h2 class="text-2xl font-bold mb-4 text-gray-900 dark:text-gray-100">Registrar Salida — formato actualizado</h2>
+      <h2 class="text-2xl font-bold mb-4 text-gray-900 dark:text-gray-100">Registrar Salida</h2>
 
       <div class="grid grid-cols-12 gap-6">
         <!-- Formulario principal -->
@@ -707,6 +808,16 @@ const scheduleHideSugerencias = () => {
                 Código generado: <strong class="text-gray-900 dark:text-gray-100">{{ codigoGenerado }}</strong>
               </div>
             </div>
+          </div>
+          <!-- Encargado -->
+          <div class="mt-5">
+            <label class="block font-semibold mb-1 text-gray-700 dark:text-gray-200">
+              Nombre del encargado
+            </label>
+            <input v-model="form.nombre_encargado" type="text" placeholder="Ingresa el nombre completo del encargado"
+              class="w-full p-2 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 
+           border border-gray-200 dark:border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+            <div class="mt-5"></div>
           </div>
 
           <!-- Persona (predictivo) -->
@@ -810,6 +921,10 @@ const scheduleHideSugerencias = () => {
             <!-- Cantidad -->
             <div>
               <label class="block font-semibold mb-1 text-gray-700 dark:text-gray-200">Cantidad</label>
+              <p class="text-gray-700 dark:text-gray-300">
+                Principal: <span class="font-bold text-indigo-600">{{ form.um }}</span>
+              </p>
+
               <div class="flex gap-2 items-center">
                 <input type="number" min="0.0001" step="0.0001" v-model.number="form.cantidad"
                   class="w-full p-2 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-700 focus:outline-none" />
@@ -837,6 +952,11 @@ const scheduleHideSugerencias = () => {
             <button @click="clearDraft"
               class="bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 px-4 py-2 rounded text-gray-800 dark:text-gray-100 focus:outline-none">
               Limpiar borrador
+            </button>
+
+            <button type="button" @click="volverATabla"
+              class="ml-auto bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-700 focusable">
+              ↩ Volver
             </button>
 
           </div>
@@ -888,15 +1008,8 @@ const scheduleHideSugerencias = () => {
               <div class="text-sm text-gray-600 dark:text-gray-300">Líneas: <strong>{{ draftTotals.lines }}</strong>
               </div>
               <div class="text-sm text-gray-600 dark:text-gray-300">Total cantidad (suma numérica): <strong>{{
-                draftTotals.totalQty }}</strong></div>
-
-              <div class="mt-3">
-                <button @click="finalizeSave({ maintain: false })"
-                  class="w-full bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-green-300">
-                  Finalizar y Guardar
-                </button>
+                draftTotals.totalQty }}</strong>
               </div>
-
               <div class="mt-2">
                 <button @click="actaPdf2_downloadPdfFile"
                   class="w-full bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-purple-300">
@@ -908,12 +1021,12 @@ const scheduleHideSugerencias = () => {
         </aside>
       </div>
 
-      <!-- Modal Inventario (fuera del grid para evitar overflow) -->
+      <!-- Modal Inventario (mejorado: tabla y filtros reducidos) -->
       <div v-if="showInventoryModal" class="fixed inset-0 z-50 flex items-start justify-center p-6" role="dialog"
         aria-modal="true" aria-label="Modal de Inventario">
         <div class="absolute inset-0 bg-black/40" @click="closeInventory"></div>
 
-        <div class="relative w-full max-w-3xl bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden">
+        <div class="relative w-full max-w-5xl bg-white dark:bg-gray-800 rounded-lg shadow-lg overflow-hidden">
           <header class="p-4 border-b dark:border-gray-700 flex items-center justify-between">
             <div class="flex items-center gap-3">
               <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">Buscar en Inventario — {{
@@ -925,44 +1038,82 @@ const scheduleHideSugerencias = () => {
           </header>
 
           <div class="p-4">
-            <div class="flex gap-2 mb-3">
-              <input v-model="inventoryFilter.q" placeholder="Buscar por código, nombre o descripción..."
-                class="flex-1 p-2 border rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 border-gray-200 dark:border-gray-700 focus:outline-none" />
-              <button @click="fetchInventory(inventoryFilter.q)"
-                class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded">Buscar</button>
+            <!-- filtros reducidos: q | solicitante | categoria | disponible -->
+            <div class="grid grid-cols-12 gap-3 items-end mb-4">
+              <div class="col-span-6">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-200">Buscar</label>
+                <input v-model="inventoryFilter.q" placeholder="Código, nombre, descripción, solicitante..."
+                  class="w-full p-2 border rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100" />
+              </div>
+
+              <div class="col-span-3">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-200">Solicitado por</label>
+                <select v-model="inventoryFilter.solicitado_por"
+                  class="w-full p-2 border rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100">
+                  <option value="">— Todos —</option>
+                  <option v-for="s in inventorySolicitantes" :key="s" :value="s">{{ s }}</option>
+                </select>
+              </div>
+
+              <div class="col-span-2">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-200">Categoría</label>
+                <select v-model="inventoryFilter.categoria"
+                  class="w-full p-2 border rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100">
+                  <option value="">— Todas —</option>
+                  <option v-for="c in inventoryCategorias" :key="c" :value="c">{{ c }}</option>
+                </select>
+              </div>
+
+              <div class="col-span-1">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-200">Disponible</label>
+                <input type="checkbox" v-model="inventoryFilter.onlyAvailable" class="mt-2" />
+              </div>
             </div>
 
             <div v-if="inventoryError" class="text-sm text-red-600 mb-2">{{ inventoryError }}</div>
             <div v-if="inventoryLoading" class="text-sm  mb-2 text-gray-700 dark:text-gray-300">Cargando inventario…
             </div>
 
-            <div v-if="!inventoryLoading && inventory.length === 0"
-              class="p-4 text-sm text-gray-500 dark:text-gray-400 border rounded bg-gray-50 dark:bg-gray-800">
-              Inventario vacío.
+            <!-- tabla -->
+            <div class="overflow-auto border rounded" style="max-height:420px;">
+              <table class="min-w-full divide-y divide-gray-200 text-base">
+                <thead class="bg-gray-50 dark:bg-gray-700">
+                  <tr>
+                    <th class="px-4 py-2 text-left">Producto</th>
+                    <th class="px-4 py-2 text-left">Código</th>
+                    <th class="px-4 py-2 text-left">UM</th>
+                    <th class="px-4 py-2 text-left">Stock</th>
+                    <th class="px-4 py-2 text-left">Solicitado por</th>
+                    <th class="px-4 py-2 text-left">Categoría</th>
+                    <th class="px-4 py-2 text-left">Acción</th>
+                  </tr>
+                </thead>
+                <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200">
+                  <tr v-for="item in filteredInventory" :key="item.code || item.raw?.id"
+                    class="hover:bg-gray-100 dark:hover:bg-gray-700">
+                    <td class="px-4 py-3 align-top text-sm font-medium text-gray-900 dark:text-gray-100">{{
+                      item.producto || item.descripcion || '—' }}</td>
+                    <td class="px-4 py-3 align-top text-sm text-gray-700 dark:text-gray-300">{{ item.code ||
+                      item.raw?.id || '—' }}</td>
+                    <td class="px-4 py-3 align-top text-sm text-gray-700 dark:text-gray-300">{{ item.um || '—' }}</td>
+                    <td class="px-4 py-3 align-top text-sm text-gray-700 dark:text-gray-300">{{ item.stock ?? '—' }}
+                    </td>
+                    <td class="px-4 py-3 align-top text-sm text-gray-700 dark:text-gray-300">{{ item.solicitado_por ||
+                      '—' }}</td>
+                    <td class="px-4 py-3 align-top text-sm text-gray-700 dark:text-gray-300">{{ item.categoria || '—' }}
+                    </td>
+                    <td class="px-4 py-3 align-top">
+                      <button @click="selectInventoryProduct(item)"
+                        class="px-3 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-sm">Seleccionar</button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
 
-            <ul v-if="filteredInventory.length" class="max-h-72 overflow-auto space-y-2">
-              <li v-for="item in filteredInventory" :key="item.code || item.id"
-                class="p-2 border rounded flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700 bg-white dark:bg-gray-800">
-                <div>
-                  <div class="font-medium text-gray-900 dark:text-gray-100">{{ item.producto || item.descripcion ||
-                    item.code }}</div>
-                  <div class="text-xs text-gray-500 dark:text-gray-400">
-                    Código: {{ item.code || item.id }} • UM: {{ item.um || '—' }} • Stock: <strong>{{ item.stock ?? '—'
-                      }}</strong>
-                  </div>
-                </div>
-
-                <div class="flex items-center gap-2">
-                  <button @click="selectInventoryProduct(item)"
-                    class="px-3 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-sm focus:outline-none">Seleccionar</button>
-                </div>
-              </li>
-            </ul>
-            <div v-else-if="!inventoryLoading"
-              class="p-4 text-sm text-gray-500 dark:text-gray-400 border rounded bg-gray-50 dark:bg-gray-800">
-              No hay coincidencias en el inventario.
-            </div>
+            <div v-if="!inventoryLoading && filteredInventory.length === 0"
+              class="p-4 text-sm text-gray-500 dark:text-gray-400 border rounded bg-gray-50 dark:bg-gray-800 mt-3">No
+              hay coincidencias en el inventario.</div>
           </div>
         </div>
       </div>
