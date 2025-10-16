@@ -52,6 +52,7 @@ class SalidaController extends Controller
 
         $itemRules = [
             'n_acta'         => 'required|string|max:50',
+            'nombre_encargado' => 'nullable|string|max:100',
             'nombre'         => 'required|string|max:100',
             'lugar'          => 'required|string|max:100',
             'distrito'       => 'required|string|max:100',
@@ -129,6 +130,7 @@ class SalidaController extends Controller
 
                 $dataToInsert = [
                     'n_acta' => $it['n_acta'],
+                    'nombre_encargado' => $it['nombre_encargado'],
                     'persona_id' => $personaId,
                     'nombre' => $it['nombre'],
                     'lugar' => $it['lugar'] ?? null,
@@ -1010,4 +1012,41 @@ class SalidaController extends Controller
             return ['__toLogSafe_error' => $ex->getMessage()];
         }
     }
+
+    public function ultimoActa(Proyecto $proyecto)
+    {
+        $tablaSalidas = 'salidas_proyecto_' . Str::of($proyecto->nombre)->lower()->replace(' ', '_');
+
+        if (!Schema::hasTable($tablaSalidas)) {
+            return response()->json(['error' => 'La tabla de salidas no existe'], 404);
+        }
+
+        // Buscar el último n_acta que siga el formato AE - NUMERO - AÑO
+        $ultimo = DB::table($tablaSalidas)
+            ->select('n_acta')
+            ->where('n_acta', 'like', 'AE - % - ' . date('Y'))
+            ->orderByDesc('id')
+            ->first();
+
+        if (!$ultimo) {
+            return response()->json([
+                'success' => true,
+                'ultimo_n_acta' => null,
+                'proximo' => 'AE - 1 - ' . date('Y')
+            ]);
+        }
+
+        // Extraer el número del medio
+        preg_match('/AE\s*-\s*(\d+)\s*-\s*\d{4}/', $ultimo->n_acta, $matches);
+        $numero = isset($matches[1]) ? (int)$matches[1] : 0;
+
+        $proximo = 'AE - ' . ($numero + 1) . ' - ' . date('Y');
+
+        return response()->json([
+            'success' => true,
+            'ultimo_n_acta' => $ultimo->n_acta,
+            'proximo' => $proximo
+        ]);
+    }
+
 }

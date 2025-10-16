@@ -104,7 +104,7 @@ onMounted(async () => {
 
   // 🔹 Nombre del usuario autenticado
   if (user && user.name) {
-    form.nombre = user.name;
+    form.nombre_encargado = user.name;
   }
 
   // 🔹 Código 2 = año actual (por defecto)
@@ -112,15 +112,62 @@ onMounted(async () => {
     form.codigo2 = String(new Date().getFullYear());
   }
 
-  // 🔹 Obtener siguiente código autoincrementado
-  try {
-    const { data } = await axios.get('/salidas/ultimo-codigo');
-    form.codigo1 = data.siguiente || 1;
-  } catch (e) {
-    form.codigo1 = 1; // Fallback si falla
-  }
+  // 🔹 Obtener siguiente código autoincrementado (por proyecto)
+  await fetchUltimoActa();
 });
 
+
+// Parsear "AE - 314 - 2025" y devolver número y año
+const parseActaProximo = (str) => {
+  if (!str || typeof str !== 'string') return null;
+  const m = str.match(/AE\s*-\s*(\d+)\s*-\s*(\d{4})/);
+  if (!m) return null;
+  return { numero: parseInt(m[1], 10), anio: m[2] };
+};
+
+const fetchUltimoActa = async () => {
+  // intenta llamar al endpoint por proyecto; si no existe, fallback a tu ruta antigua
+  try {
+    const urlApi = `/proyectos/${props.proyecto.id}/ultimo-acta`;
+    const res = await axios.get(urlApi);
+    const data = res.data || {};
+
+    // Prioriza "proximo" (si backend devuelve el siguiente ya calculado)
+    let parsed = parseActaProximo(data.proximo);
+    if (!parsed && data.siguiente) {
+      // Si tu backend devolvía 'siguiente' como número
+      parsed = { numero: Number(data.siguiente), anio: String(data.anio || form.codigo2) };
+    }
+    if (!parsed && data.ultimo_n_acta) {
+      // Si solo hay ultimo, sumamos 1
+      const last = parseActaProximo(data.ultimo_n_acta);
+      if (last) parsed = { numero: last.numero + 1, anio: last.anio };
+    }
+
+    if (parsed && Number.isFinite(parsed.numero)) {
+      // Guardamos como número (sin ceros). El computed `codigoGenerado` se encarga del padStart.
+      form.codigo1 = String(parsed.numero);
+      form.codigo2 = String(parsed.anio || new Date().getFullYear());
+    } else {
+      // fallback
+      form.codigo1 = form.codigo1 || '1';
+      form.codigo2 = form.codigo2 || String(new Date().getFullYear());
+    }
+  } catch (err) {
+    // Fallback a la ruta antigua si tienes `/salidas/ultimo-codigo` (por compatibilidad)
+    try {
+      const alt = await axios.get('/salidas/ultimo-codigo');
+      const s = alt.data || {};
+      if (s.siguiente) {
+        form.codigo1 = String(s.siguiente);
+      } else {
+        form.codigo1 = form.codigo1 || '1';
+      }
+    } catch (e) {
+      form.codigo1 = form.codigo1 || '1';
+    }
+  }
+};
 
 
 /* ---------- Personas predictivo ---------- */
@@ -305,6 +352,7 @@ const finalizeSave = async (options = { maintain: false }) => {
   const nActaValue = codigoGenerado.value;
   const records = draft.value.map(it => ({
     n_acta: nActaValue,
+    nombre_encargado: form.nombre_encargado ?? null,
     nombre: form.nombre,
     lugar: form.lugar,
     distrito: form.distrito,

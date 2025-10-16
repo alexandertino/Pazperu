@@ -219,6 +219,9 @@ Route::middleware('auth')->group(function () {
         ->name('api.proyectos.am.meta');
 
 
+    Route::get('/proyectos/{proyecto}/ultimo-acta', [\App\Http\Controllers\SalidaController::class, 'ultimoActa']);
+
+
     // batch: devuelve vinculaciones para varios am_row_id
     Route::get('/proyectos/{proyecto}/vinculaciones/batch', [VinculacionController::class, 'batch'])
         ->name('proyectos.vinculaciones.batch');

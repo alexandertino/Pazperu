@@ -6,20 +6,13 @@ const props = defineProps({
   logs: { type: Array, default: () => [] }
 });
 
-// filtros        
+// filtros
 const searchUser = ref('');
 const searchAction = ref('');
 const searchModel = ref('');
-
-const filteredLogs = computed(() => {
-  return props.logs.filter(log => {
-    return (
-      (!searchUser.value || (log.user?.name || '').toLowerCase().includes(searchUser.value.toLowerCase())) &&
-      (!searchAction.value || log.action === searchAction.value) &&
-      (!searchModel.value || (log.model || '').toLowerCase().includes(searchModel.value.toLowerCase()))
-    );
-  });
-});
+const projectFilter = ref('');
+const tableTypeFilter = ref('');
+const nActaSearch = ref(''); // ejemplo: "AE - 125 - 2025"
 
 // parsea safe cualquier log.changes (string JSON o objeto)
 function parseChanges(changes) {
@@ -28,7 +21,6 @@ function parseChanges(changes) {
     try {
       return JSON.parse(changes);
     } catch {
-      // si no es JSON, devolver la cadena cruda
       return changes;
     }
   }
@@ -66,6 +58,163 @@ function getComparisonRows(changesObj) {
   }
   return rows;
 }
+
+/* --- extracción metadata del model --- */
+function extractModelMeta(model) {
+  const raw = (model || '').trim();
+  if (!raw) return { tableType: '', projectName: '' };
+  const parts = raw.split('_').filter(Boolean);
+  const tableType = parts[0] || '';
+
+  let projectName = '';
+  const proyectoIdx = parts.findIndex(p => p.toLowerCase() === 'proyecto');
+  if (proyectoIdx >= 0 && proyectoIdx + 1 < parts.length) {
+    projectName = parts[proyectoIdx + 1];
+  } else if (parts.length >= 2) {
+    projectName = parts[parts.length - 1];
+  } else {
+    projectName = '';
+  }
+
+  return { tableType: tableType.toLowerCase(), projectName: projectName.toLowerCase() };
+}
+
+/* --- búsqueda recursiva por clave/valor dentro de un objeto --- */
+function searchKeyValue(obj, keyName, searchVal) {
+  if (!obj || !keyName || !searchVal) return null;
+  const needle = String(searchVal).toLowerCase();
+
+  function recurse(target) {
+    if (target === null || target === undefined) return null;
+    if (typeof target !== 'object') return null;
+
+    if (Array.isArray(target)) {
+      for (const item of target) {
+        const r = recurse(item);
+        if (r) return r;
+      }
+      return null;
+    }
+
+    for (const k of Object.keys(target)) {
+      const v = target[k];
+
+      if (String(k).toLowerCase() === keyName.toLowerCase()) {
+        if (v === null || v === undefined) continue;
+        if (String(v).toLowerCase().includes(needle)) return { key: k, value: v };
+      }
+
+      if (typeof v === 'object') {
+        const found = recurse(v);
+        if (found) return found;
+      } else {
+        if (String(v).toLowerCase().includes(needle)) {
+          return { key: k, value: v };
+        }
+      }
+    }
+
+    return null;
+  }
+
+  return recurse(obj);
+}
+
+/* --- busca n_acta dentro del parsedChanges del log --- */
+function findNActaInLog(parsedChanges, nActa) {
+  if (!nActa) return null;
+  if (!parsedChanges) return null;
+
+  if (typeof parsedChanges === 'string') {
+    if (parsedChanges.toLowerCase().includes(nActa.toLowerCase())) {
+      return { key: null, value: parsedChanges };
+    }
+    return null;
+  }
+
+  return searchKeyValue(parsedChanges, 'n_acta', nActa);
+}
+
+/* --- logs enriquecidos --- */
+const logsWithMeta = computed(() => {
+  return props.logs.map(log => {
+    const model = log.model || '';
+    const meta = extractModelMeta(model);
+    return {
+      ...log,
+      __modelMeta: meta,
+      __parsedChanges: parseChanges(log.changes)
+    };
+  });
+});
+
+/* --- sets únicos para selects --- */
+const uniqueProjects = computed(() => {
+  const set = new Set();
+  for (const l of logsWithMeta.value) {
+    const p = l.__modelMeta.projectName;
+    if (p) set.add(p);
+  }
+  return Array.from(set).sort();
+});
+
+const uniqueTableTypes = computed(() => {
+  const set = new Set();
+  for (const l of logsWithMeta.value) {
+    const t = l.__modelMeta.tableType;
+    if (t) set.add(t);
+  }
+  return Array.from(set).sort();
+});
+
+/* --- filteredEntries: devuelve array de { log, matchesActa } --- */
+const filteredEntries = computed(() => {
+  const entries = [];
+
+  for (const log of logsWithMeta.value) {
+    // filtros base
+    if (searchUser.value) {
+      const name = (log.user?.name || '').toLowerCase();
+      if (!name.includes(searchUser.value.toLowerCase())) continue;
+    }
+    if (searchAction.value) {
+      if (log.action !== searchAction.value) continue;
+    }
+    if (searchModel.value) {
+      if (!((log.model || '').toLowerCase().includes(searchModel.value.toLowerCase()))) continue;
+    }
+    if (projectFilter.value) {
+      const proj = log.__modelMeta.projectName || '';
+      if (!proj.includes(projectFilter.value.toLowerCase())) continue;
+    }
+    if (tableTypeFilter.value) {
+      const type = log.__modelMeta.tableType || '';
+      if (type !== tableTypeFilter.value.toLowerCase()) continue;
+    }
+
+    // búsqueda por n_acta
+    let matchesActa = null;
+    if (nActaSearch.value && nActaSearch.value.trim() !== '') {
+      // <-- POR DEFECTO: sólo buscamos en 'salidas' -->
+      if (log.__modelMeta.tableType === 'salidas') {
+        matchesActa = findNActaInLog(log.__parsedChanges, nActaSearch.value);
+      } else {
+        matchesActa = null;
+      }
+
+      // Si quieres que n_acta busque en cualquier tabla, sustituye las dos líneas anteriores por:
+      // matchesActa = findNActaInLog(log.__parsedChanges, nActaSearch.value);
+
+      if (!matchesActa) continue; // si no encontró, saltamos este log
+    }
+
+    entries.push({ log, matchesActa });
+  }
+
+  // ordenar por fecha (desc)
+  entries.sort((a, b) => new Date(b.log.created_at) - new Date(a.log.created_at));
+  return entries;
+});
 </script>
 
 <template>
@@ -89,8 +238,20 @@ function getComparisonRows(changesObj) {
           <option value="delete">Elimino</option>
         </select>
 
-        <input v-model="searchModel" placeholder="Filtrar por modelo"
-          class="px-3 py-2 border rounded-lg w-48 dark:bg-gray-800 dark:text-white" />
+        <select v-model="projectFilter" class="px-3 py-2 border rounded-lg dark:bg-gray-800 dark:text-white">
+          <option value="">Todos los proyectos</option>
+          <option v-for="p in uniqueProjects" :key="p" :value="p">{{ p }}</option>
+        </select>
+
+        <select v-model="tableTypeFilter" class="px-3 py-2 border rounded-lg dark:bg-gray-800 dark:text-white">
+          <option value="">Todos los tipos</option>
+          <option v-for="t in uniqueTableTypes" :key="t" :value="t">{{ t }}</option>
+        </select>
+
+        <!-- Input n_acta: por defecto solo aplica a logs cuyo tipo sea 'salidas' -->
+        <input v-model="nActaSearch"
+          placeholder="Buscar n_acta (ej. AE - 125 - 2025) — busca solo en Salidas por defecto"
+          class="px-3 py-2 border rounded-lg w-64 dark:bg-gray-800 dark:text-white" />
       </div>
 
       <!-- Tabla principal -->
@@ -106,37 +267,46 @@ function getComparisonRows(changesObj) {
         </thead>
 
         <tbody>
-          <tr v-for="log in filteredLogs" :key="log.id" class="border-t dark:border-white-700 dark:text-white align-top">
-            <td class="px-4 py-3">{{ log.user?.name ?? '—' }}</td>
+          <tr v-for="entry in filteredEntries" :key="entry.log.id" :class="[
+            'border-t dark:border-white-700 dark:text-white align-top',
+            entry.matchesActa ? 'bg-green-50 dark:bg-green-900/20' : ''
+          ]">
+            <td class="px-4 py-3">{{ entry.log.user?.name ?? '—' }}</td>
 
             <td class="px-4 py-3">
-              <span
-                :class="{
-                  'text-green-600 font-semibold': log.action === 'create',
-                  'text-red-600 font-semibold': log.action === 'delete',
-                  'text-yellow-600 font-semibold': log.action === 'update'
-                }"
-              >
-                {{ log.action }}
+              <span :class="{
+                'text-green-600 font-semibold': entry.log.action === 'create',
+                'text-red-600 font-semibold': entry.log.action === 'delete',
+                'text-yellow-600 font-semibold': entry.log.action === 'update'
+              }">
+                {{ entry.log.action }}
               </span>
             </td>
 
-            <td class="px-4 py-3">{{ log.model ?? '—' }}</td>
+            <td class="px-4 py-3">
+              {{ entry.log.model ?? '—' }}
+              <div class="text-xs text-gray-500 dark:text-gray-400">
+                {{ entry.log.__modelMeta.tableType }} / {{ entry.log.__modelMeta.projectName }}
+              </div>
+            </td>
 
-            <!-- Cambios: caso create / delete / update -->
             <td class="px-4 py-3 w-1/2">
               <details class="group">
-                <summary class="cursor-pointer text-blue-600 dark:text-blue-400">Ver cambios</summary>
+                <summary class="cursor-pointer text-blue-600 dark:text-blue-400 flex items-center gap-2">
+                  Ver cambios
+                  <span v-if="entry.matchesActa"
+                    class="text-sm px-2 py-0.5 rounded bg-green-100 dark:bg-green-800 text-green-800 dark:text-green-200">
+                    n_acta: {{ entry.matchesActa.value }}
+                  </span>
+                </summary>
 
                 <div class="mt-2 text-xs">
-                  <!-- parse object -->
-                  <template v-if="typeof parseChanges(log.changes) === 'object'">
-                    <!-- Delete o Create simples: objeto con 'deleted' o 'new' -->
-                    <template v-if="parseChanges(log.changes).deleted && !parseChanges(log.changes).old">
+                  <template v-if="typeof entry.log.__parsedChanges === 'object'">
+                    <template v-if="entry.log.__parsedChanges.deleted && !entry.log.__parsedChanges.old">
                       <table class="w-full text-left text-xs border rounded overflow-hidden">
                         <tbody>
-                          <tr v-for="(value, key) in parseChanges(log.changes).deleted" :key="key"
-                              class="border-t even:bg-white odd:bg-gray-50 dark:even:bg-gray-800 dark:odd:bg-gray-900">
+                          <tr v-for="(value, key) in entry.log.__parsedChanges.deleted" :key="key"
+                            class="border-t even:bg-white odd:bg-gray-50 dark:even:bg-gray-800 dark:odd:bg-gray-900">
                             <td class="px-2 py-1 font-medium text-gray-700 dark:text-gray-300">{{ key }}</td>
                             <td class="px-2 py-1">{{ displayValue(value) }}</td>
                           </tr>
@@ -144,12 +314,11 @@ function getComparisonRows(changesObj) {
                       </table>
                     </template>
 
-                    <template v-else-if="parseChanges(log.changes).new && !parseChanges(log.changes).old">
-                      <!-- create -->
+                    <template v-else-if="entry.log.__parsedChanges.new && !entry.log.__parsedChanges.old">
                       <table class="w-full text-left text-xs border rounded overflow-hidden">
                         <tbody>
-                          <tr v-for="(value, key) in parseChanges(log.changes).new" :key="key"
-                              class="border-t even:bg-white odd:bg-gray-50 dark:even:bg-gray-800 dark:odd:bg-gray-900">
+                          <tr v-for="(value, key) in entry.log.__parsedChanges.new" :key="key"
+                            class="border-t even:bg-white odd:bg-gray-50 dark:even:bg-gray-800 dark:odd:bg-gray-900">
                             <td class="px-2 py-1 font-medium text-gray-700 dark:text-gray-300">{{ key }}</td>
                             <td class="px-2 py-1">{{ displayValue(value) }}</td>
                           </tr>
@@ -157,8 +326,7 @@ function getComparisonRows(changesObj) {
                       </table>
                     </template>
 
-                    <template v-else-if="parseChanges(log.changes).old && parseChanges(log.changes).new">
-                      <!-- update: comparación -->
+                    <template v-else-if="entry.log.__parsedChanges.old && entry.log.__parsedChanges.new">
                       <table class="w-full text-left text-xs border rounded overflow-hidden">
                         <thead class="bg-gray-50 dark:bg-gray-800">
                           <tr>
@@ -168,8 +336,8 @@ function getComparisonRows(changesObj) {
                           </tr>
                         </thead>
                         <tbody>
-                          <tr v-for="row in getComparisonRows(parseChanges(log.changes))" :key="row.key"
-                              :class="row.changed ? 'bg-yellow-50 dark:bg-yellow-900/20' : 'even:bg-white odd:bg-gray-50 dark:even:bg-gray-800 dark:odd:bg-gray-900'">
+                          <tr v-for="row in getComparisonRows(entry.log.__parsedChanges)" :key="row.key"
+                            :class="row.changed ? 'bg-yellow-50 dark:bg-yellow-900/20' : 'even:bg-white odd:bg-gray-50 dark:even:bg-gray-800 dark:odd:bg-gray-900'">
                             <td class="px-2 py-1 font-medium text-gray-700 dark:text-gray-300">{{ row.key }}</td>
                             <td class="px-2 py-1"><small>{{ displayValue(row.oldVal) }}</small></td>
                             <td class="px-2 py-1"><small>{{ displayValue(row.newVal) }}</small></td>
@@ -179,20 +347,20 @@ function getComparisonRows(changesObj) {
                     </template>
 
                     <template v-else>
-                      <!-- fallback: render JSON formateado si no encaja -->
-                      <pre class="mt-2 p-2 rounded bg-gray-100 dark:bg-gray-800 overflow-x-auto">{{ JSON.stringify(parseChanges(log.changes), null, 2) }}</pre>
+                      <pre
+                        class="mt-2 p-2 rounded bg-gray-100 dark:bg-gray-800 overflow-x-auto">{{ JSON.stringify(entry.log.__parsedChanges, null, 2) }}</pre>
                     </template>
                   </template>
 
-                  <!-- Si parseChanges devolvió string u otro -->
                   <template v-else>
-                    <pre class="mt-2 p-2 rounded bg-gray-100 dark:bg-gray-800 overflow-x-auto">{{ parseChanges(log.changes) }}</pre>
+                    <pre
+                      class="mt-2 p-2 rounded bg-gray-100 dark:bg-gray-800 overflow-x-auto">{{ entry.log.__parsedChanges }}</pre>
                   </template>
                 </div>
               </details>
             </td>
 
-            <td class="px-4 py-3">{{ new Date(log.created_at).toLocaleString() }}</td>
+            <td class="px-4 py-3">{{ new Date(entry.log.created_at).toLocaleString() }}</td>
           </tr>
         </tbody>
       </table>
