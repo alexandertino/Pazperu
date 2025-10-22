@@ -110,7 +110,6 @@ function handleSubmit() {
                                 class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-blue-500" />
                         </div>
 
-                        <!-- Botón: Guardar -->
                         <!-- Botones -->
                         <div class="flex justify-between items-center">
                             <!-- Botón volver -->

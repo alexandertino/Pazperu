@@ -13,7 +13,7 @@ const user = usePage().props.auth.user
     <AuthenticatedLayout>
         <template #header>
             <h2 class="text-xl font-semibold leading-tight text-gray-800 dark:text-gray-200">
-                Panel de Administrador
+                Panel
             </h2>
         </template>
 

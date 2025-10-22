@@ -295,106 +295,8 @@ const filteredList = (tab) => {
   );
 };
 
-const mostrarBoton = ref(false);
 
-// Verificar si ya existen datos iniciales en la base
-const verificarDatos = async () => {
-  try {
-    const { data } = await axios.get(endpointBase);
 
-    const tieneCategorias = data.categorias?.length > 0;
-    const tieneUnidades = data.UnidadMedida?.length > 0;
-    const tieneSolicitantes = data.solicitantes?.length > 0;
-    const tieneProyectos = data.proyectos?.length > 0;
-    const tieneUsuarios = data.usuarios?.length > 0;
-
-    mostrarBoton.value = !(tieneCategorias || tieneUnidades || tieneSolicitantes || tieneProyectos || tieneUsuarios);
-
-    // Si el endpoint devuelve usuarios (cuando se llama desde index/manage), sincronizamos
-    if (Array.isArray(data.usuarios)) {
-      usuarios.value = data.usuarios.map(u => ({ id: u.id, name: u.name ?? '', email: u.email ?? '', role: u.role ?? '' }));
-    }
-  } catch (error) {
-    console.error('Error al verificar datos iniciales:', error);
-    mostrarBoton.value = false;
-  }
-};
-
-// Insertar datos iniciales (llamado una vez desde el botón)
-const insertarDatosIniciales = async () => {
-  try {
-    const res = await axios.post(`${endpointBase}/insert-initial`);
-    console.log('Datos insertados:', res.data);
-
-    const result = res.data.result || res.data.inserted || null;
-
-    if (result) {
-      // categorias
-      if (Array.isArray(result.categorias)) {
-        for (const c of result.categorias) {
-          const exists = categorias.value.some(x => x.id === c.id || (x.nombre && x.nombre === c.nombre));
-          if (!exists && !c.skipped) {
-            categorias.value.unshift({ id: c.id, nombre: c.nombre });
-          }
-        }
-      }
-
-      // unidades_medida
-      const unidadesKey = result.unidades_medida || result.unidades || result.UnidadMedida;
-      if (Array.isArray(unidadesKey)) {
-        for (const u of unidadesKey) {
-          const exists = unidades.value.some(x => x.id === u.id || (x.nombre && x.nombre === u.nombre));
-          if (!exists && !u.skipped) {
-            unidades.value.unshift({ id: u.id, nombre: u.nombre });
-          }
-        }
-      }
-
-      // solicitantes
-      if (Array.isArray(result.solicitantes)) {
-        for (const s of result.solicitantes) {
-          const exists = solicitantes.value.some(x => x.id === s.id || (x.nombre && x.nombre === s.nombre));
-          if (!exists && !s.skipped) {
-            solicitantes.value.unshift({ id: s.id, nombre: s.nombre });
-          }
-        }
-      }
-
-      // proyectos
-      if (Array.isArray(result.proyectos)) {
-        for (const p of result.proyectos) {
-          const exists = proyectos.value.some(x => x.id === p.id || (x.nombre && x.nombre === p.nombre));
-          if (!exists && !p.skipped) {
-            proyectos.value.unshift({
-              id: p.id,
-              nombre: p.nombre,
-              estado: p.estado ?? '',
-              descripcion: p.descripcion ?? '',
-              fecha_inicio: p.fecha_inicio ?? '',
-              fecha_fin: p.fecha_fin ?? ''
-            });
-          }
-        }
-      }
-
-      // usuarios (opcional si el backend devuelve)
-      if (Array.isArray(result.usuarios)) {
-        for (const u of result.usuarios) {
-          const exists = usuarios.value.some(x => x.id === u.id || (x.email && x.email === u.email));
-          if (!exists && !u.skipped) {
-            usuarios.value.unshift({ id: u.id, name: u.name ?? '', email: u.email ?? '', role: u.role ?? '' });
-          }
-        }
-      }
-    }
-
-    mostrarBoton.value = false;
-    Swal.fire('OK', '✅ Datos iniciales cargados correctamente', 'success');
-  } catch (error) {
-    console.error('Error al insertar datos iniciales:', error);
-    Swal.fire('Error', '❌ Error al insertar datos iniciales', 'error');
-  }
-};
 
 // Función para refrescar solo usuarios desde el servidor (útil después de cambios)
 const refreshUsuarios = async () => {
@@ -411,6 +313,133 @@ const refreshUsuarios = async () => {
     Swal.fire('Error', 'No se pudo actualizar usuarios', 'error');
   }
 };
+
+// mostrarBoton siempre true (botón siempre visible)
+const mostrarBoton = ref(true);
+
+// Verificar datos: dejamos la verificación pero NO cambiamos mostrarBoton
+const verificarDatos = async () => {
+  try {
+    const { data } = await axios.get(endpointBase);
+
+    // Opcional: puedes seguir usando esta info para sincronizar arrays
+    if (Array.isArray(data.usuarios)) {
+      usuarios.value = data.usuarios.map(u => ({ id: u.id, name: u.name ?? '', email: u.email ?? '', role: u.role ?? '' }));
+    }
+
+    // NO modificamos mostrarBoton — el botón debe seguir visible
+  } catch (error) {
+    console.error('Error al verificar datos iniciales:', error);
+    // mostramos advertencia tipo toast pero dejamos el botón visible
+    Swal.fire({
+      toast: true,
+      position: 'top-end',
+      icon: 'warning',
+      title: 'No se pudo verificar si existen datos. Puedes intentar cargar igual.',
+      showConfirmButton: false,
+      timer: 3000
+    });
+  }
+};
+// agrega esto arriba en tu <script setup>
+const inserting = ref(false);
+
+//daaaa
+const insertarDatosIniciales = async () => {
+  if (inserting.value) return; // evita reentradas
+  inserting.value = true;
+
+  try {
+    const res = await axios.post(`${endpointBase}/insert-initial`);
+    console.log('Datos insertados:', res.data);
+
+    // Intentamos obtener el payload con tolerancia a distintas claves
+    const payload = res.data?.result || res.data?.inserted || res.data || null;
+
+    // Si viene payload con arrays, los añadimos localmente evitando duplicados simples
+    if (payload) {
+      // categorias
+      if (Array.isArray(payload.categorias)) {
+        for (const c of payload.categorias) {
+          const exists = categorias.value.some(x => x.id === c.id || (x.nombre && x.nombre === c.nombre));
+          if (!exists && !c.skipped) categorias.value.unshift({ id: c.id, nombre: c.nombre });
+        }
+      }
+
+      // unidades (varias posibles claves)
+      const unidadesKey = payload.unidades_medida || payload.unidades || payload.UnidadMedida;
+      if (Array.isArray(unidadesKey)) {
+        for (const u of unidadesKey) {
+          const exists = unidades.value.some(x => x.id === u.id || (x.nombre && x.nombre === u.nombre));
+          if (!exists && !u.skipped) unidades.value.unshift({ id: u.id, nombre: u.nombre });
+        }
+      }
+
+      // solicitantes
+      if (Array.isArray(payload.solicitantes)) {
+        for (const s of payload.solicitantes) {
+          const exists = solicitantes.value.some(x => x.id === s.id || (x.nombre && x.nombre === s.nombre));
+          if (!exists && !s.skipped) solicitantes.value.unshift({ id: s.id, nombre: s.nombre });
+        }
+      }
+
+      // proyectos
+      if (Array.isArray(payload.proyectos)) {
+        for (const p of payload.proyectos) {
+          const exists = proyectos.value.some(x => x.id === p.id || (x.nombre && x.nombre === p.nombre));
+          if (!exists && !p.skipped) {
+            proyectos.value.unshift({
+              id: p.id,
+              nombre: p.nombre,
+              estado: p.estado ?? '',
+              descripcion: p.descripcion ?? '',
+              fecha_inicio: p.fecha_inicio ?? '',
+              fecha_fin: p.fecha_fin ?? ''
+            });
+          }
+        }
+      }
+
+      // usuarios
+      if (Array.isArray(payload.usuarios)) {
+        for (const u of payload.usuarios) {
+          const exists = usuarios.value.some(x => x.id === u.id || (x.email && x.email === u.email));
+          if (!exists && !u.skipped) usuarios.value.unshift({ id: u.id, name: u.name ?? '', email: u.email ?? '', role: u.role ?? '' });
+        }
+      }
+    }
+
+    // Toast success (si el backend trae un mensaje lo mostramos)
+    const successMsg = res.data?.message || (payload ? '✅ Datos iniciales cargados correctamente' : '✅ Insertado');
+    Swal.fire({
+      toast: true,
+      position: 'top-end',
+      icon: 'success',
+      title: successMsg,
+      showConfirmButton: false,
+      timer: 2500
+    });
+
+    // opcional: refrescar datos desde servidor
+    // await verificarDatos();
+  } catch (error) {
+    console.error('Error al insertar datos iniciales:', error);
+
+    // Intentamos extraer mensaje útil
+    const serverMsg = error?.response?.data?.message || error?.response?.data || error.message || 'Error al insertar datos iniciales';
+    Swal.fire({
+      toast: true,
+      position: 'top-end',
+      icon: 'error',
+      title: `❌ ${serverMsg}`,
+      showConfirmButton: false,
+      timer: 4000
+    });
+  } finally {
+    inserting.value = false;
+  }
+};
+
 </script>
 
 <template>
@@ -422,14 +451,6 @@ const refreshUsuarios = async () => {
             <div>
               <h1 class="text-2xl font-semibold">Gestionar tablas meta (global)</h1>
               <div>
-                <button v-if="mostrarBoton" @click="insertarDatosIniciales"
-                  class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
-                  📌 Cargar datos iniciales
-                </button>
-
-                <p v-else class="text-gray-600 mt-2">
-                  ✅ Los datos iniciales ya están cargados.
-                </p>
               </div>
               <p class="text-sm text-muted-foreground dark:text-gray-400">
                 Categorías, Unidades, Solicitantes, Personas, Proyectos y Usuarios — administración rápida y segura

@@ -90,7 +90,7 @@ const irGestionMeta = () => {
                                             <!-- Evitamos que el click del botón burbujee al <tr> -->
                                             <button @click.stop="irAInventarioSalidas(proyecto.id)"
                                                 class="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 active:scale-95 transition">
-                                                📦 Ver Inventario
+                                                Ver Proyecto
                                             </button>
                                         </td>
                                     </tr>

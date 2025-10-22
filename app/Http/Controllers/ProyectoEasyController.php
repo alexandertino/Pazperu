@@ -18,6 +18,7 @@ class ProyectoEasyController extends Controller
 {
     public function create(Request $request, Proyecto $proyecto)
     {
+        $this->ensurePreferencesTableExists();
         // normalización incoming
         $incoming = $request->all();
 
@@ -113,23 +114,85 @@ class ProyectoEasyController extends Controller
     public function lastPrefill(Proyecto $proyecto)
     {
         try {
-            $tableSuffix = strtolower(str_replace(' ', '_', $proyecto->nombre));
-            $tableEasy = 'easy_proyecto_' . $tableSuffix;
+            $table = $this->makeTableName($proyecto);
 
-            // obtener el último número usado
-            $last = DB::table($tableEasy)
-                ->orderByDesc('id')
-                ->value('numero_descripcion_pieza');
+            $response = [
+                'ok' => true,
+                'next_numero' => 1,
+                'last' => null,
+                'last_num_full' => null,
+                'last_cuenta' => null,
+                'tipo_cambio' => null,
+                'prefs_source' => null,
+            ];
 
-            $nextNum = 1;
-            if ($last && preg_match('/^(\d+)/', $last, $m)) {
-                $nextNum = intval($m[1]) + 1;
+            // 1) Si existe la tabla EASY, tomar el último registro
+            if (Schema::hasTable($table)) {
+                $lastRow = DB::table($table)
+                    ->orderByDesc('id')
+                    ->first();
+
+                if ($lastRow) {
+                    // intentar obtener numero_descripcion_pieza completo y cuenta
+                    if (isset($lastRow->numero_descripcion_pieza)) {
+                        $response['last_num_full'] = $lastRow->numero_descripcion_pieza;
+                        $response['last'] = $lastRow->numero_descripcion_pieza;
+                    }
+
+                    if (isset($lastRow->cuenta_general) && $lastRow->cuenta_general) {
+                        $response['last_cuenta'] = $lastRow->cuenta_general;
+                    }
+
+                    if (isset($lastRow->tipo_cambio) && $lastRow->tipo_cambio) {
+                        $response['tipo_cambio'] = $lastRow->tipo_cambio;
+                    }
+
+                    // inferir next_numero desde el último numero registrado si comienza con dígitos
+                    if (!empty($lastRow->numero_descripcion_pieza) && preg_match('/^(\d+)/', $lastRow->numero_descripcion_pieza, $m)) {
+                        $response['next_numero'] = intval($m[1]) + 1;
+                    }
+                }
             }
 
-            return response()->json([
-                'ok' => true,
-                'next_numero' => $nextNum
-            ]);
+            // 2) Complementar con easy_preferences (user first, luego global)
+            try {
+                $userId = Auth::id();
+                $prefRow = null;
+
+                if ($userId) {
+                    $prefRow = DB::table('easy_preferences')
+                        ->where('proyecto_id', $proyecto->id)
+                        ->where('user_id', $userId)
+                        ->whereNotNull('prefs')
+                        ->orderByDesc('id')
+                        ->first();
+                }
+
+                if (! $prefRow) {
+                    $prefRow = DB::table('easy_preferences')
+                        ->where('proyecto_id', $proyecto->id)
+                        ->whereNull('user_id')
+                        ->whereNotNull('prefs')
+                        ->orderByDesc('id')
+                        ->first();
+                }
+
+                if ($prefRow && $prefRow->prefs) {
+                    $prefs = json_decode($prefRow->prefs, true);
+                    if (isset($prefs['cuenta_general']) && $prefs['cuenta_general']) {
+                        $response['last_cuenta'] = $prefs['cuenta_general'];
+                    }
+                    if (isset($prefs['tipo_cambio']) && $prefs['tipo_cambio']) {
+                        $response['tipo_cambio'] = $prefs['tipo_cambio'];
+                    }
+                    $response['prefs_source'] = $prefRow->user_id ? 'user' : 'project_global';
+                }
+            } catch (\Throwable $e) {
+                // no bloquear si prefs no existen
+                Log::debug('lastPrefill: easy_preferences read error: '.$e->getMessage());
+            }
+
+            return response()->json($response);
         } catch (\Exception $e) {
             return response()->json([
                 'ok' => false,
@@ -197,6 +260,7 @@ class ProyectoEasyController extends Controller
 
     public function store(Request $request, Proyecto $proyecto)
 {
+    $this->ensurePreferencesTableExists();
     try {
         // Validación
         $validated = $request->validate([

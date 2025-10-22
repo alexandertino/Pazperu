@@ -33,7 +33,6 @@ class AmMovimientoController extends Controller
             'actividad'      => 'nullable|string|max:255',
             'ingresos'       => 'nullable|numeric',
             'egresos'        => 'nullable|numeric',
-            'accion'         => 'nullable|string|in:transf,sueldo,gb,ch,ingreso',
             'inventario'     => 'nullable',
             'cantidad'       => 'nullable|integer|min:1',
             'meta'           => 'nullable',
@@ -94,7 +93,6 @@ class AmMovimientoController extends Controller
             'ingresos'       => $ingresos,
             'egresos'        => $egresos,
             'saldo'          => 0, // se calculará
-            'accion'         => $data['accion'] ?? null,
             'created_at'     => now(),
             'updated_at'     => now(),
         ];
@@ -230,11 +228,58 @@ class AmMovimientoController extends Controller
             $table->decimal('ingresos', 16, 2)->nullable()->default(0);
             $table->decimal('egresos', 16, 2)->nullable()->default(0);
             $table->decimal('saldo', 16, 2)->nullable()->default(0);
-            $table->string('accion', 50)->nullable();
+
             $table->timestamps();
 
             $table->index('n_acta');
         });
+    }
+
+    protected function recalcularSaldosDesdeTabla(string $tabla, int $startId){
+        if (! Schema::hasTable($tabla)) return;
+
+        DB::beginTransaction();
+        try {
+            $prev = DB::table($tabla)
+                ->where('id', '<', $startId)
+                ->orderByDesc('id')
+                ->lockForUpdate()
+                ->first();
+
+            $saldo = $prev ? (float) $prev->saldo : 0.0;
+
+            $rows = DB::table($tabla)
+                ->where('id', '>=', $startId)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+
+            foreach ($rows as $r) {
+                $ing = isset($r->ingresos) ? (float)$r->ingresos : 0.0;
+                $eg  = isset($r->egresos) ? (float)$r->egresos : 0.0;
+
+                $saldo = round($saldo + $ing - $eg, 2);
+
+                DB::table($tabla)->where('id', $r->id)->update([
+                    'saldo' => $saldo,
+                    'updated_at' => now(),
+                ]);
+            }
+
+            DB::commit();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    protected function recalcularTodoTabla(string $tabla){
+        if (! Schema::hasTable($tabla)) return;
+
+        $first = DB::table($tabla)->orderBy('id')->first();
+        if (! $first) return; // tabla vacía
+
+        $this->recalcularSaldosDesdeTabla($tabla, $first->id);
     }
 
     public function meta(Proyecto $proyecto, Request $request)
@@ -301,7 +346,6 @@ class AmMovimientoController extends Controller
 
         return "{$prefixUpper}-001";
     }
-
 
     public function datos(Proyecto $proyecto)
     {
@@ -395,6 +439,9 @@ class AmMovimientoController extends Controller
         try {
             DB::beginTransaction();
             DB::table($tablaDestino)->where('id', $id)->update($update);
+            if (Schema::hasColumn($tablaDestino, 'saldo')) {
+                $this->recalcularSaldosDesdeTabla($tablaDestino, $id);
+            }
             DB::commit();
 
             // Redirigir atrás para que Inertia actualice la página (no respondas con JSON plano)
@@ -428,8 +475,7 @@ class AmMovimientoController extends Controller
         ]);
     }
 
-    public function updateCaja(Proyecto $proyecto, Request $request, $id)
-{
+    public function updateCaja(Proyecto $proyecto, Request $request, $id){
     $base = (string) Str::of($proyecto->nombre)->lower()->replace(' ', '_');
     $tabla = 'am_caja_proyecto_' . $base;
 
@@ -443,7 +489,13 @@ class AmMovimientoController extends Controller
         'descripcion'    => 'nullable|string|max:255',
         'presupuestario' => 'nullable|string|max:100',
         'actividad'      => 'nullable|string|max:10',
+        'ingresos'       => 'nullable|numeric',
+        'egresos'        => 'nullable|numeric',
     ]);
+
+    // Normalizar numeric -> decimal
+    $ingresos = isset($data['ingresos']) ? (float)$data['ingresos'] : null;
+    $egresos  = isset($data['egresos'])  ? (float)$data['egresos']  : null;
 
     $update = [
         'n_acta'         => $data['n_acta'] ?? null,
@@ -451,21 +503,35 @@ class AmMovimientoController extends Controller
         'descripcion'    => $data['descripcion'] ?? null,
         'presupuestario' => $data['presupuestario'] ?? null,
         'actividad'      => $data['actividad'] ?? null,
+        // solo incluir ingresos/egresos si existen en la request
         'updated_at'     => now(),
     ];
 
+    // incluir columnas si la tabla las tiene
+    $columns = Schema::getColumnListing($tabla);
+    if (in_array('ingresos', $columns) && $ingresos !== null) $update['ingresos'] = $ingresos;
+    if (in_array('egresos', $columns) && $egresos !== null) $update['egresos'] = $egresos;
+
     try {
+        DB::beginTransaction();
+
         DB::table($tabla)->where('id', $id)->update($update);
+
+        // Recalcular saldos desde este id (asegúrate de tener el método recalcularSaldosDesdeTabla en el controlador)
+        if (in_array('saldo', $columns)) {
+            $this->recalcularSaldosDesdeTabla($tabla, (int)$id);
+        }
+
+        DB::commit();
 
         return redirect()->route('proyectos.amcaja.edit', [$proyecto->id, $id])
             ->with('success', 'Registro actualizado correctamente.');
     } catch (\Throwable $e) {
+        DB::rollBack();
         Log::error('Error updateCaja: ' . $e->getMessage());
         return redirect()->back()->with('error', 'Error al actualizar la caja.');
     }
 }
-
-
 
 
     public function destroyCaja(Proyecto $proyecto, $id)
@@ -477,11 +543,26 @@ class AmMovimientoController extends Controller
             return redirect()->back()->with('error', 'Tabla de caja no existe.');
         }
 
-        DB::table($tabla)->where('id', $id)->delete();
+        try {
+            DB::beginTransaction();
 
-        return redirect()->back()->with('success', 'Registro de caja eliminado correctamente.');
+            // Borrar
+            DB::table($tabla)->where('id', $id)->delete();
+
+            // Encontrar el siguiente id (si existe) y recalcular desde él
+            $next = DB::table($tabla)->where('id', '>', $id)->orderBy('id')->first();
+            if ($next) {
+                $this->recalcularSaldosDesdeTabla($tabla, $next->id);
+            }
+
+            DB::commit();
+            return redirect()->back()->with('success', 'Registro de caja eliminado correctamente.');
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            Log::error('Error destroyCaja: ' . $e->getMessage());
+            return redirect()->back()->with('error', 'Error al eliminar registro de caja.');
+        }
     }
-
 
     public function editBanco(Proyecto $proyecto, $id)
     {
@@ -518,7 +599,6 @@ class AmMovimientoController extends Controller
         'descripcion'    => 'nullable|string|max:255',
         'presupuestario' => 'nullable|string|max:255',
         'actividad'      => 'nullable|string|max:255',
-        'accion'         => 'nullable|string|max:50',
     ]);
 
     // Filtramos solo columnas existentes por seguridad
@@ -527,28 +607,66 @@ class AmMovimientoController extends Controller
     $allowed['updated_at'] = now();
 
     try {
+        DB::beginTransaction();
+
         DB::table($tabla)->where('id', $id)->update($allowed);
+
+        // Recalcular saldos desde este id
+        $this->recalcularSaldosDesdeTabla($tabla, $id);
+
+        DB::commit();
 
         return redirect()->route('proyectos.ambanco.edit', [$proyecto->id, $id])
             ->with('success', 'Banco actualizado correctamente.');
     } catch (\Throwable $e) {
+        DB::rollBack();
         Log::error('Error updateBanco: ' . $e->getMessage());
         return redirect()->back()->with('error', 'Error al actualizar el banco.');
     }
-}
+    }
 
-
-    public function destroyBanco(Proyecto $proyecto, $id)
-    {
+    public function destroyBanco(Proyecto $proyecto, $id){
         $base = (string) Str::of($proyecto->nombre)->lower()->replace(' ', '_');
         $tabla = 'am_banco_proyecto_' . $base;
 
         if (! Schema::hasTable($tabla)) {
-            return redirect()->back()->with('error', 'Tabla de banco no existe.');
+            return redirect()->back()->with('error', 'Tabla de caja no existe.');
         }
 
-        DB::table($tabla)->where('id', $id)->delete();
+        try {
+            DB::beginTransaction();
 
-        return redirect()->back()->with('success', 'Registro de banco eliminado correctamente.');
+            // Borrar
+            DB::table($tabla)->where('id', $id)->delete();
+
+            // Encontrar el siguiente id (si existe) y recalcular desde él
+            $next = DB::table($tabla)->where('id', '>', $id)->orderBy('id')->first();
+            if ($next) {
+                $this->recalcularSaldosDesdeTabla($tabla, $next->id);
+            }
+
+            DB::commit();
+            return redirect()->back()->with('success', 'Registro de Banco eliminado correctamente.');
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            Log::error('Error destroyBanco: ' . $e->getMessage());
+            return redirect()->back()->with('error', 'Error al eliminar registro de Banco.');
+        }
     }
+
+    public function recalcular(Proyecto $proyecto, Request $request){
+        $tabla = $request->input('tabla'); // am_caja_proyecto_xxx o am_banco_proyecto_xxx
+        if (! $tabla || ! Schema::hasTable($tabla)) {
+            return response()->json(['ok' => false, 'message' => 'Tabla inválida'], 422);
+        }
+
+        try {
+            $this->recalcularTodoTabla($tabla);
+            return response()->json(['ok' => true, 'message' => 'Recalculado correctamente.']);
+        } catch (\Throwable $e) {
+            Log::error('Error recalcular: ' . $e->getMessage());
+            return response()->json(['ok' => false, 'message' => 'Error al recalcular'], 500);
+        }
+    }
+
 }

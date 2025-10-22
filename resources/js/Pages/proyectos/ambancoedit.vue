@@ -29,18 +29,20 @@
             <p v-if="form.errors.actividad" class="text-red-500 text-sm">{{ form.errors.actividad }}</p>
           </div>
 
-          <!-- Acción -->
-          <div>
-            <label class="block text-sm font-medium dark:text-white">Acción</label>
-            <select v-model="form.accion" class="mt-1 w-full p-2 border rounded">
-              <option value="">-- (ninguna) --</option>
-              <option value="transf">Transf</option>
-              <option value="sueldo">Sueldo</option>
-              <option value="gb">GB</option>
-              <option value="ch">CH</option>
-              <option value="ingreso">Ingreso</option>
-            </select>
-            <p v-if="form.errors.accion" class="text-red-500 text-sm">{{ form.errors.accion }}</p>
+
+          <!-- CONTROL LOCAL: ¿Crear vinculación de inventario después? -->
+          <div class="mt-2 p-3 border rounded bg-gray-50 dark:bg-gray-700">
+            <label class="block text-sm font-medium mb-2 dark:text-white">¿Crear vinculación de inventario?</label>
+            <div class="flex items-center gap-6">
+              <label class="inline-flex items-center gap-2 cursor-pointer dark:text-white">
+                <input type="radio" v-model="inventarioLocal" :value="true" />
+                <span>Sí</span>
+              </label>
+              <label class="inline-flex items-center gap-2 cursor-pointer dark:text-white">
+                <input type="radio" v-model="inventarioLocal" :value="false" />
+                <span>No</span>
+              </label>
+            </div>
           </div>
 
         </div>
@@ -61,7 +63,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { ref, computed } from 'vue'
 import { useForm, usePage } from '@inertiajs/vue3'
 import Swal from 'sweetalert2'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
@@ -69,16 +71,19 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 const props = defineProps({
   proyecto: Object,
   acta: Object,
-  tabla: String,
+  tabla: String, // si pasas el nombre de la tabla por props lo usaremos
 })
 
 const form = useForm({
-  descripcion: props.acta.descripcion ?? '',
-  presupuestario: props.acta.presupuestario ?? '',
-  actividad: props.acta.actividad ?? '',
-  accion: props.acta.accion ?? '',
+  descripcion: props.acta?.descripcion ?? '',
+  presupuestario: props.acta?.presupuestario ?? '',
+  actividad: props.acta?.actividad ?? '',
 })
 
+// Estado local para el radio (no se envía)
+const inventarioLocal = ref(false) // por defecto 'No'
+
+// Flash messages
 const page = usePage()
 const flashSuccess = computed(() => page.props.value?.flash?.success ?? null)
 const flashError   = computed(() => page.props.value?.flash?.error ?? null)
@@ -101,7 +106,41 @@ function confirmSubmit() {
 }
 
 function submit() {
-  form.put(route('proyectos.ambanco.update', { proyecto: props.proyecto.id, id: props.acta.id }))
+  form.put(route('proyectos.ambanco.update', { proyecto: props.proyecto.id, id: props.acta.id }), {
+    onSuccess: () => {
+      if (inventarioLocal.value) {
+        const am_table = props.tabla || `am_banco_proyecto_${String(props.proyecto?.nombre || '').toLowerCase().replace(/\s+/g, '_')}`
+
+        const numero = props.acta?.numero ?? props.acta?.n_acta ?? ''
+
+        const url =
+          `/proyectos/${props.proyecto.id}/inventarios/create` +
+          `?am_row_id=${encodeURIComponent(props.acta.id)}` +
+          `&am_table=${encodeURIComponent(am_table)}` +
+          `&descripcion=${encodeURIComponent(form.descripcion || '')}` +
+          `&numero=${encodeURIComponent(numero)}`
+
+        window.location.href = url
+        return
+      }
+
+      Swal.fire({
+        title: 'Guardado',
+        text: 'Los cambios se guardaron correctamente.',
+        icon: 'success',
+        timer: 1500,
+        showConfirmButton: false,
+        timerProgressBar: true,
+      })
+    },
+    onError: () => {
+      Swal.fire({
+        title: 'Error',
+        text: 'Ocurrió un error al guardar. Revisa los campos.',
+        icon: 'error',
+      })
+    }
+  })
 }
 
 function volver() {

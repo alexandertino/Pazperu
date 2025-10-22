@@ -28,6 +28,7 @@ class ProyectoContabilidadExportController extends Controller
             return abort(404, "Proyecto no encontrado: {$proyecto}");
         }
 
+        
         // ========== NUEVOS PARAMS (C2..C5 y logos) ==========
         $c2_text = $request->query('c2', 'Islas de Paz Perú');
         $c3_ruc  = $request->query('ruc', $proyectoRow->ruc ?? 'ruc:20600630769');
@@ -152,6 +153,7 @@ class ProyectoContabilidadExportController extends Controller
         // ---------- PARTE 2: Generación de hojas, formato y descarga ----------
         foreach ($mapping as $label => $tablaBase) {
             // Determinar columnas relevantes por tabla
+            
             $colFecha = $firstColumn($tablaBase, ['fecha', 'created_at', 'updated_at']);
             if (! $colFecha) continue;
 
@@ -282,7 +284,29 @@ class ProyectoContabilidadExportController extends Controller
             }
 
             $movimientosMes = (float)$ingresosMes - (float)$egresosMes;
-            $saldoCierre = (float)$saldoApertura + (float)$movimientosMes;
+
+            // Obtener último saldo registrado en el mes (si existe)
+            $ultimoSaldoMes = null;
+            if ($colSaldo && Schema::hasColumn($tablaBase, $colSaldo)) {
+                $ultimoReg = DB::table($tablaBase)
+                    ->select($colSaldo, $colFecha)
+                    ->whereBetween($colFecha, [$desde->toDateString(), $hasta->toDateString()])
+                    ->whereNotNull($colSaldo)
+                    ->orderBy($colFecha, 'desc');
+                if (Schema::hasColumn($tablaBase, 'id')) $ultimoReg = $ultimoReg->orderBy('id', 'desc');
+                $ultimoReg = $ultimoReg->first();
+                if ($ultimoReg && isset($ultimoReg->{$colSaldo})) {
+                    $ultimoSaldoMes = (float)$ultimoReg->{$colSaldo};
+                }
+            }
+
+            // Si es CAJA y hay saldo real, usamos ese; en caso contrario, usamos el cálculo normal
+            if (strtolower($label) === 'caja' && $ultimoSaldoMes !== null) {
+                $saldoCierre = $ultimoSaldoMes;
+            } else {
+                $saldoCierre = (float)$saldoApertura + (float)$movimientosMes;
+            }
+
 
             // Crear hoja
             if ($sheetIndex === 0) {
@@ -296,10 +320,9 @@ class ProyectoContabilidadExportController extends Controller
 
             // ===== Ajuste: Columna A en 15px (~0.94cm) para cada hoja =====
             $sheet->getColumnDimension('A')->setWidth(2.82);
-
             // ===== Inserción del logo principal Y logo secundario ARRIBA (más grandes) =====
             // Definimos coordenadas para logo2 según tipo de hoja
-            $logo2Coord = (strtolower($label) === 'easy') ? 'M1' : ((strtolower($label) === 'banco') ? 'J1' : 'K1');
+            $logo2Coord = (strtolower($label) === 'easy') ? 'M1' : ((strtolower($label) === 'banco') ? 'H1' : 'H1');
 
             if ($logo_path && file_exists($logo_path)) {
                 try {
@@ -336,6 +359,12 @@ class ProyectoContabilidadExportController extends Controller
             // ===== EASY (compacto) =====
             if (strtolower($label) === 'easy') {
                 // C2..C5 valores solicitados por ti (sin cambio)
+                $mergeCols = $easyTable ? 'A1:N1' : 'A1:O1';
+                $sheet->mergeCells($mergeCols);
+                $sheet->setCellValue('A1', strtoupper("Proyecto: {$proyectoRow->nombre} — {$label} — " . $desde->format('F Y')));
+                $sheet->getStyle('A1')->getFont()->setSize(12)->setBold(true);
+                $sheet->getStyle('A1')->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
+
                 $sheet->setCellValueExplicit('C2', $c2_text, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
                 $sheet->setCellValueExplicit('C3', $c3_ruc,  \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
                 $sheet->setCellValueExplicit('C4', $c4_text, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
@@ -416,8 +445,25 @@ class ProyectoContabilidadExportController extends Controller
                     $sheet->getColumnDimension($col)->setAutoSize(true);
                 }
 
-                // Ajuste solicitado: columna C ancho ~ 130 pixels = 13.67 (aprox en unidades de PhpSpreadsheet)
-                $sheet->getColumnDimension('C')->setWidth(13.67);
+                // -> CONTROL DE ANCHOS: evitar que autosize sobreescriba nuestro ancho fijo
+                foreach (range('B', 'N') as $col) {
+                    // permitir autoSize en todas excepto C (C debe quedar fija)
+                    if ($col === 'C') {
+                        $sheet->getColumnDimension($col)->setAutoSize(false);
+                        continue;
+                    }
+                    $sheet->getColumnDimension($col)->setAutoSize(true);
+                }
+
+                // Ahora fijamos definitivamente la columna C (después del loop)
+                $sheet->getColumnDimension('C')->setAutoSize(false);
+                $sheet->getColumnDimension('C')->setWidth(13.67); // ≈ 100-130 px según preferencia
+                $sheet->getStyle('C:C')->getAlignment()->setWrapText(false);
+                $sheet->getStyle('C:C')->getAlignment()->setShrinkToFit(false);
+
+                // Evitar que el texto "desborde" (Excel muestra overflow si la celda derecha está vacía).
+                // Vamos a asegurarnos de que la columna D tenga un valor (cadena vacía explícita) cuando escribamos filas.
+
 
                 // Formatos numéricos (columnas movidas)
                 $sheet->getStyle("C11:D{$lastDataRow}")->getNumberFormat()->setFormatCode('#,##0.00'); // Gasto, Receta -> C,D
@@ -436,14 +482,14 @@ class ProyectoContabilidadExportController extends Controller
                 $sheet->setCellValueExplicit('C4', $c4_text, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
                 $sheet->setCellValueExplicit('C5', $c5_dir,  \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
 
-                $mergeCols = $isBanco ? 'A1:J1' : 'A1:K1';
+                $mergeCols = $isBanco ? 'A1:I1' : 'A1:I1';
                 $sheet->mergeCells($mergeCols);
                 $sheet->setCellValue('A1', strtoupper("Proyecto: {$proyectoRow->nombre} — {$label} — " . $desde->format('F Y')));
                 $sheet->getStyle('A1')->getFont()->setSize(12)->setBold(true);
                 $sheet->getStyle('A1')->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
 
                 // Banner en fila 7 MOVIDO a empezar en B
-                $sheet->mergeCells($isBanco ? 'B7:K7' : 'B7:L7');
+                $sheet->mergeCells($isBanco ? 'B7:I7' : 'B7:I7');
                 $sheet->setCellValue('B7', "LIBRO DEL DIARIO - " . $desde->format('F Y'));
                 $sheet->getStyle('B7')->getFont()->setBold(true);
                 $sheet->getStyle('B7')->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
@@ -460,16 +506,14 @@ class ProyectoContabilidadExportController extends Controller
                         'F9' => 'Actividad',
                         'G9' => 'Ingresos',
                         'H9' => 'Egresos',
-                        'I9' => '', // soporte/espacio
-                        'J9' => 'Saldo',
-                        'K9' => 'Acción',
+                        'I9' => 'Saldo',
                     ];
                     foreach ($cols as $cell => $text) {
                         $sheet->setCellValue($cell, $text);
                     }
-                    $sheet->getStyle('B9:K9')->getFont()->setBold(true);
-                    $sheet->getStyle('B9:K9')->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
-                    $sheet->getStyle('B9:K9')->getFill()->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
+                    $sheet->getStyle('B9:I9')->getFont()->setBold(true);
+                    $sheet->getStyle('B9:I9')->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
+                    $sheet->getStyle('B9:I9')->getFill()->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
                         ->getStartColor()->setRGB('FFF9C4');
                 } else {
                     $cols = [
@@ -480,26 +524,27 @@ class ProyectoContabilidadExportController extends Controller
                         'F9' => 'Actividad',
                         'G9' => 'Ingresos',
                         'H9' => 'Egresos',
-                        'I9' => '', // soporte/espacio
-                        'J9' => 'Saldo',
+                        'I9' => 'Saldo',
                     ];
                     foreach ($cols as $cell => $text) {
                         $sheet->setCellValue($cell, $text);
                     }
-                    $sheet->getStyle('B9:J9')->getFont()->setBold(true);
-                    $sheet->getStyle('B9:J9')->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
-                    $sheet->getStyle('B9:J9')->getFill()->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
+                    $sheet->getStyle('B9:I9')->getFont()->setBold(true);
+                    $sheet->getStyle('B9:I9')->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
+                    $sheet->getStyle('B9:I9')->getFill()->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
                         ->getStartColor()->setRGB('FFF9C4');
                 }
 
                 // Saldo apertura (fila 8 intermedia) -> SALDO ahora en columna J (antes I)
-                $setNumericOrBlank($sheet, 'J8', is_numeric($saldoApertura) ? (float)$saldoApertura : $saldoApertura);
+                $setNumericOrBlank($sheet, 'I10', is_numeric($saldoApertura) ? (float)$saldoApertura : $saldoApertura);
                 // Movemos el texto label para encajar con tabla desplazada (+1)
-                $sheet->setCellValue('D8', 'Saldo del mes anterior');
-                $sheet->getStyle('D8:J8')->getFont()->setBold(true);
-                $sheet->getStyle('D8:J8')->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_LEFT);
+                $sheet->setCellValue('D10', 'Saldo del mes anterior');
+                $sheet->getStyle('B10')->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
+                $sheet->getStyle('B10')->getAlignment()->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER);
+                $sheet->getStyle('D10:J10')->getFont()->setBold(true);
+                $sheet->getStyle('D10:J10')->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_LEFT);
 
-                // Datos desde fila 11
+                // Datos desde fila 11  
                 $startDataRow = 11;
                 $row = $startDataRow;
                 foreach ($registrosMes as $r) {
@@ -526,9 +571,9 @@ class ProyectoContabilidadExportController extends Controller
                     if ($isBanco) {
                         $accionVal = $pickValue($arr, ['accion', 'accion_tipo', 'accion_nombre', 'accion_desc']);
                         $sheet->setCellValueExplicit('K' . $row, $accionVal ?? '', \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
-                        $setNumericOrBlank($sheet, 'J' . $row, $sd);
+                        $setNumericOrBlank($sheet, 'I' . $row, $sd);
                     } else {
-                        $setNumericOrBlank($sheet, 'J' . $row, $sd);
+                        $setNumericOrBlank($sheet, 'I' . $row, $sd);
                     }
 
                     $row++;
@@ -541,24 +586,44 @@ class ProyectoContabilidadExportController extends Controller
                 // Totales desplazados
                 $setNumericOrBlank($sheet, 'G' . $summaryRow, $ingresosMes);
                 $setNumericOrBlank($sheet, 'H' . $summaryRow, $egresosMes);
-                $setNumericOrBlank($sheet, 'J' . $summaryRow, $movimientosMes);
+                if (strtolower($label) === 'caja') {
+                    $setNumericOrBlank($sheet, 'I' . $summaryRow, $saldoCierre);
+                } else {
+                    $setNumericOrBlank($sheet, 'I' . $summaryRow, $movimientosMes);
+                }
+
 
                 // Aplicar estilos con nuevos rangos (desplazados +1)
                 if ($isBanco) {
-                    $sheet->getStyle("B9:K{$lastDataRow}")->applyFromArray($innerBorders);
-                    $sheet->getStyle("B9:K{$lastDataRow}")->applyFromArray($outerBorders);
-                    foreach (range('B', 'K') as $col) {
-                        $sheet->getColumnDimension($col)->setAutoSize(true);
+                    $sheet->getStyle("B9:I{$lastDataRow}")->applyFromArray($innerBorders);
+                    $sheet->getStyle("B9:I{$lastDataRow}")->applyFromArray($outerBorders);
+                    foreach (range('B', 'I') as $col) {
+                    // mantener la columna C con ancho fijo
+                    if ($col === 'C') {
+                        $sheet->getColumnDimension($col)->setAutoSize(false);
+                        $sheet->getColumnDimension($col)->setWidth(14.3);
+                        continue;
+                    }
+                    $sheet->getColumnDimension($col)->setAutoSize(true);
+
                     }
                     $sheet->getStyle("G{$startDataRow}:H{$lastDataRow}")->getNumberFormat()->setFormatCode('#,##0.00');
-                    $sheet->getStyle("J{$startDataRow}:J{$lastDataRow}")->getNumberFormat()->setFormatCode('#,##0.00');
+                    $sheet->getStyle("I{$startDataRow}:J{$lastDataRow}")->getNumberFormat()->setFormatCode('#,##0.00');
                     $sheet->getStyle("G{$summaryRow}:J{$summaryRow}")->getNumberFormat()->setFormatCode('#,##0.00');
                 } else {
-                    $sheet->getStyle("B9:J{$lastDataRow}")->applyFromArray($innerBorders);
-                    $sheet->getStyle("B9:J{$lastDataRow}")->applyFromArray($outerBorders);
-                    foreach (range('B', 'J') as $col) {
+                    $sheet->getStyle("B9:I{$lastDataRow}")->applyFromArray($innerBorders);
+                    $sheet->getStyle("B9:I{$lastDataRow}")->applyFromArray($outerBorders);
+                    foreach (range('B', 'I') as $col) {
+                        // mantener la columna C con ancho fijo
+                        if ($col === 'C') {
+                            $sheet->getColumnDimension($col)->setAutoSize(false);
+                            $sheet->getColumnDimension($col)->setWidth(14.3);
+                            continue;
+                        }
                         $sheet->getColumnDimension($col)->setAutoSize(true);
                     }
+                    $sheet->getColumnDimension('C')->setAutoSize(false);
+                    $sheet->getColumnDimension('C')->setWidth(14.3);
                     $sheet->getStyle("G{$startDataRow}:H{$lastDataRow}")->getNumberFormat()->setFormatCode('#,##0.00');
                     $sheet->getStyle("J{$startDataRow}:J{$lastDataRow}")->getNumberFormat()->setFormatCode('#,##0.00');
                     $sheet->getStyle("G{$summaryRow}:J{$summaryRow}")->getNumberFormat()->setFormatCode('#,##0.00');

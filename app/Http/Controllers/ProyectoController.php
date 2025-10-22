@@ -102,7 +102,6 @@ class ProyectoController extends Controller
                 $table->decimal('ingresos', 15, 2)->default(0);
                 $table->decimal('egresos', 15, 2)->default(0);
                 $table->decimal('saldo', 15, 2)->default(0);
-                $table->string('accion')->nullable();
                 $table->timestamps();
             });
         }

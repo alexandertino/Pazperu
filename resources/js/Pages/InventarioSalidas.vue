@@ -58,6 +58,7 @@ const tablaVisibleLabel = computed(() => {
     return ''
 })
 
+
 // Helpers (robustos para formatos:
 // "YYYY-MM-DD", "YYYY-MM-DD HH:MM:SS", "YYYY-MM-DDTHH:MM:SSZ", etc.)
 function getDateParts(fecha) {
@@ -156,6 +157,19 @@ const topN = ref(10);
 // Nuevo: filtro por solicitante (para la vista Precios)
 const filtroSolicitantePrecio = ref('todos');
 const filtroEncargado = ref('todos');
+
+const conteoPorEstado = computed(() => {
+    // Solo calcular si se seleccionó un encargado específico
+    if (filtroEncargado.value === 'todos') return null;
+
+    const filtradas = salidasFiltradas.value;
+
+    const pendiente = filtradas.filter(s => s.estado?.toLowerCase() === 'pendiente').length;
+    const aceptado = filtradas.filter(s => s.estado?.toLowerCase() === 'aceptado').length;
+
+    return { pendiente, aceptado };
+});
+
 
 const encargadosUnicos = computed(() => {
     const nombres = props.salidas?.map(s => s?.nombre_encargado)?.filter(Boolean) || [];
@@ -416,39 +430,50 @@ const toggleOrdenSalidas = () => ordenSalidasAsc.value = !ordenSalidasAsc.value;
 const cache = {};
 let timeoutId = null;
 
-const mostrarTooltip = (codigo) => {
-    if (!codigo) return; // 🚨 evita undefined
+const codigoActivo = ref(null);
+const posicionTooltip = ref("abajo"); // puede ser "abajo" o "arriba"
 
-    clearTimeout(timeoutId);
-    timeoutId = setTimeout(async () => {
-        if (cache[codigo]) {
-            productoTooltip.value = cache[codigo];
-            tooltipVisible.value = true;
-            return;
-        }
+const mostrarTooltip = (codigo, event) => {
+  if (!codigo) return;
 
-        try {
-            const res = await axios.get(
-                `/proyectos/${props.proyecto.id}/buscar-producto/${encodeURIComponent(codigo)}`
-            );
+  clearTimeout(timeoutId);
+  codigoActivo.value = codigo;
 
-            if (res.data.existe && res.data.producto) {
-                cache[codigo] = res.data.producto;
-                productoTooltip.value = res.data.producto;
-                tooltipVisible.value = true;
-            }
-        } catch (err) {
-            console.error("❌ Error cargando tooltip:", err);
-            productoTooltip.value = null;
-            tooltipVisible.value = false;
-        }
-    }, 300);
+  // Detectar si la celda está cerca del final de la ventana
+  const rect = event.target.getBoundingClientRect();
+  const espacioAbajo = window.innerHeight - rect.bottom;
+  posicionTooltip.value = espacioAbajo < 200 ? "arriba" : "abajo";
+
+  timeoutId = setTimeout(async () => {
+    if (cache[codigo]) {
+      productoTooltip.value = cache[codigo];
+      tooltipVisible.value = true;
+      return;
+    }
+
+    try {
+      const res = await axios.get(
+        `/proyectos/${props.proyecto.id}/buscar-producto/${encodeURIComponent(codigo)}`
+      );
+
+      if (res.data.existe && res.data.producto) {
+        cache[codigo] = res.data.producto;
+        productoTooltip.value = res.data.producto;
+        tooltipVisible.value = true;
+      }
+    } catch (err) {
+      console.error("❌ Error cargando tooltip:", err);
+      tooltipVisible.value = false;
+      productoTooltip.value = null;
+    }
+  }, 300);
 };
 
 const ocultarTooltip = () => {
-    clearTimeout(timeoutId);
-    tooltipVisible.value = false;
-    productoTooltip.value = null;
+  clearTimeout(timeoutId);
+  tooltipVisible.value = false;
+  productoTooltip.value = null;
+  codigoActivo.value = null;
 };
 
 
@@ -899,33 +924,55 @@ const parseNumero = (val) => {
 };
 
 
-/* ---------- parseFecha (acepta dd/mm/yyyy, yyyy-mm-dd, ISO) ---------- */
+/* ---------- parseFecha (normaliza siempre a medianoche LOCAL) ---------- */
 const parseFecha = (fechaStr) => {
     if (!fechaStr) return null;
     try {
         const s = String(fechaStr).trim();
-        if (s.indexOf('/') !== -1) {
+
+        // dd/mm/yyyy
+        if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(s)) {
             const parts = s.split('/');
-            if (parts.length >= 3) {
-                const day = Number(parts[0]), month = Number(parts[1]) - 1, year = Number(parts[2]);
-                if (!isNaN(day) && !isNaN(month) && !isNaN(year)) return new Date(year, month, day);
+            const day = Number(parts[0]);
+            const month = Number(parts[1]) - 1;
+            const year = Number(parts[2]);
+            if (!isNaN(day) && !isNaN(month) && !isNaN(year)) {
+                const d = new Date(year, month, day);
+                d.setHours(0, 0, 0, 0);
+                return d;
             }
         }
-        const d = new Date(s);
-        if (!isNaN(d.getTime())) return d;
+
+        // yyyy-mm-dd (sin hora) -> forzar local
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+            const parts = s.split('-');
+            const year = Number(parts[0]);
+            const month = Number(parts[1]) - 1;
+            const day = Number(parts[2]);
+            if (!isNaN(year) && !isNaN(month) && !isNaN(day)) {
+                const d = new Date(year, month, day);
+                d.setHours(0, 0, 0, 0);
+                return d;
+            }
+        }
+
+        // Otros: ISO con hora o valores parseables por Date
+        const d0 = new Date(s);
+        if (!isNaN(d0.getTime())) {
+            // extraer Y/M/D en zona local y construir fecha local (evita shift UTC)
+            const y = d0.getFullYear();
+            const m = d0.getMonth();
+            const day = d0.getDate();
+            const d = new Date(y, m, day);
+            d.setHours(0, 0, 0, 0);
+            return d;
+        }
     } catch (e) {
-        return null;
+        // ignore and return null
     }
     return null;
 };
-/* ---------- util: chequear si una fecha pertenece a mes/anio ---------- */
-const esDelMes = (fechaStr, m = mesActivo.value, y = anioActivo.value) => {
-    const d = parseFecha(fechaStr);
-    if (!d) return false;
-    const mes = d.getMonth() + 1;
-    const anio = d.getFullYear();
-    return mes === Number(m) && anio === Number(y);
-};
+
 
 /* ---------- util: mes/anio anterior ---------- */
 const getPrevMesAnio = (m, y) => {
@@ -937,10 +984,10 @@ const getPrevMesAnio = (m, y) => {
 };
 
 /* ---------- util: chequear fecha contra mes/anio dado ---------- */
-const esDelMesCon = (fechaStr, m, y) => {
-    const d = parseFecha(fechaStr);
-    if (!d) return false;
-    return (d.getMonth() + 1) === Number(m) && d.getFullYear() === Number(y);
+    const esDelMesCon = (fechaRaw, mes, anio) => {
+    const f = parseFecha(fechaRaw);
+    if (!f) return false;
+    return f.getMonth() + 1 === mes && f.getFullYear() === anio;
 };
 
 
@@ -948,28 +995,26 @@ const esDelMesCon = (fechaStr, m, y) => {
 const ultimoSaldoDelMes = (items = [], fechaCampo = 'fecha') => {
     if (!Array.isArray(items) || items.length === 0) return 0;
 
-    // construir lista con fecha válida
     const conFecha = items
         .map(i => {
-            const f = parseFecha(i[fechaCampo] ?? i.created_at ?? i.fecha);
-            return { raw: i, fechaObj: f };
+            const fecha = parseFecha(i[fechaCampo] ?? i.created_at ?? i.fecha);
+            return { raw: i, fechaObj: fecha };
         })
-        .filter(x => x.fechaObj)
+        .filter(x => x.fechaObj instanceof Date && !isNaN(x.fechaObj))
         .sort((a, b) => a.fechaObj - b.fechaObj);
 
     if (conFecha.length > 0) {
         const ultimo = conFecha[conFecha.length - 1].raw;
-        const s = parseNumero(ultimo.saldo);
-        // si el registro tiene un saldo válido (incluso 0) lo devolvemos
-        if (!isNaN(s)) return s;
-        // si existe saldo explícito pero no es un número válido, hacemos fallback
+        const saldo = parseNumero(ultimo.saldo);
+        if (!isNaN(saldo)) return saldo;
     }
 
-    // fallback: calcular cierre = ingresos - egresos acumulado del array
-    const ingresos = (items || []).reduce((s, r) => s + parseNumero(r.ingresos), 0);
-    const egresos = (items || []).reduce((s, r) => s + parseNumero(r.egresos), 0);
+    // fallback si no hay saldo válido
+    const ingresos = items.reduce((s, r) => s + parseNumero(r.ingresos), 0);
+    const egresos = items.reduce((s, r) => s + parseNumero(r.egresos), 0);
     return ingresos - egresos;
 };
+
 
 
 /* ==========================
@@ -979,7 +1024,7 @@ const ultimoSaldoDelMes = (items = [], fechaCampo = 'fecha') => {
 /* Filtrados actuales por mesActivo/anioActivo */
 
 /* Totales del mes (ingresos / egresos / movimientos) - CAJA */
-const ingresosCajaTotal = computed(() =>
+const    ingresosCajaTotal = computed(() =>
     (actasCajaFiltradas.value || []).reduce((s, a) => s + parseNumero(a.ingresos), 0)
 );
 const egresosCajaTotal = computed(() =>
@@ -1008,26 +1053,27 @@ const egresosgestiónEasyTotal = computed(() =>
     (itemsEasyFiltrados.value || []).reduce((s, i) => s + parseNumero(i.debito_moneda_gestion), 0)
 );
 const movimientosEasy = computed(() => ingresosEasyTotal.value - egresosEasyTotal.value);
+//nuevos
+
 
 /* ==========================
   Apertura (último saldo del mes anterior) y Cierre (apertura + movimientos)
 ========================== */
 
-/* CAJA: mes anterior */
 const actasCajaDelMesAnterior = computed(() => {
-    const prev = getPrevMesAnio(mesActivo.value, anioActivo.value);
-    return (actasCaja?.value || []).filter(a => esDelMesCon(a.fecha, prev.mes, prev.anio));
+  const prev = getPrevMesAnio(mesActivo.value, anioActivo.value);
+  return (actasCaja?.value || []).filter(a => esDelMesCon(a.fecha, prev.mes, prev.anio));
 });
-const aperturaCaja = computed(() => ultimoSaldoDelMes(actasCajaDelMesAnterior.value, 'fecha'));
-const cierreCaja = computed(() => aperturaCaja.value + movimientosCaja.value);
+
+const cierreCaja = computed(() => (aperturaCajaSnapshot.value ?? aperturaCaja.value ?? 0) + movimientosCaja.value);
 
 /* BANCO: mes anterior */
 const actasBancoDelMesAnterior = computed(() => {
-    const prev = getPrevMesAnio(mesActivo.value, anioActivo.value);
-    return (actasBanco?.value || []).filter(a => esDelMesCon(a.fecha, prev.mes, prev.anio));
+  const prev = getPrevMesAnio(mesActivo.value, anioActivo.value);
+  return (actasBanco?.value || []).filter(a => esDelMesCon(a.fecha, prev.mes, prev.anio));
 });
 const aperturaBanco = computed(() => ultimoSaldoDelMes(actasBancoDelMesAnterior.value, 'fecha'));
-const cierreBanco = computed(() => aperturaBanco.value + movimientosBanco.value);
+const cierreBanco = computed(() => (aperturaBancoSnapshot.value ?? aperturaBanco.value ?? 0) + movimientosBanco.value);
 
 /* EASY: mes anterior (usando created_at si aplica) */
 const itemsEasyDelMesAnterior = computed(() => {
@@ -1050,16 +1096,47 @@ const exportarExcel = (mes, anio) => {
 
 const ultimoSaldo = computed(() => {
     const actas = actasCajaFiltradas.value || [];
-    // si no hay actas en el mes, devolvemos la apertura del mes (fallback)
-    if (!actas || actas.length === 0) return aperturaCaja?.value ?? 0;
-    // usamos la utilidad que ya definiste
-    return ultimoSaldoDelMes(actas, 'fecha');
+
+    // 1️⃣ Si no hay actas en el mes actual, usar la apertura (saldo del mes anterior)
+    if (!actas || actas.length === 0) {
+        return aperturaCaja?.value ?? 0;
+    }
+
+    // 2️⃣ Intentar calcular el último saldo del mes actual
+    const saldoMes = ultimoSaldoDelMes(actas, 'fecha');
+    if (!isNaN(saldoMes) && saldoMes !== null) {
+        return saldoMes;
+    }
+
+    // 3️⃣ Si el resultado no es válido, intentar con todas las actas (por seguridad global)
+    const todasActas = actasCaja?.value || [];
+    const saldoGlobal = ultimoSaldoDelMes(todasActas, 'fecha');
+    if (!isNaN(saldoGlobal)) {
+        return saldoGlobal;
+    }
+    const ultimoSaldoForce = ref(0);
+
+watch(
+  () => actasCajaFiltradas.value,
+  (nuevasActas) => {
+    const saldo = ultimoSaldoDelMes(nuevasActas, 'fecha');
+    ultimoSaldoForce.value = isNaN(saldo) ? 0 : saldo;
+  },
+  { deep: true }
+);
+
+
+    // 4️⃣ Último fallback: saldo apertura del mes anterior
+    return aperturaCaja?.value ?? 0;
+    
 });
+
 
 const ultimoSaldoBanco = computed(() => {
     const actas = actasBancoFiltradas.value || [];
     if (!actas || actas.length === 0) return aperturaBanco?.value ?? 0;
     return ultimoSaldoDelMes(actas, 'fecha');
+    
 });
 
 const submitting = ref(false);
@@ -1109,17 +1186,7 @@ function abrirCrearEasyConActa(acta = {}) {
     });
 }
 
-function eliminarCaja(id) {
-    if (confirm('¿Seguro que quieres eliminar este registro de caja?')) {
-        router.delete(route('proyectos.amcaja.destroy', { proyecto: props.proyecto.id, id }))
-    }
-}
 
-function eliminarBanco(id) {
-    if (confirm('¿Seguro que quieres eliminar este registro de banco?')) {
-        router.delete(route('proyectos.ambanco.destroy', { proyecto: props.proyecto.id, id }))
-    }
-}
 
 function eliminarActa(id) {
     if (!confirm('¿Seguro que quieres eliminar este registro?')) return;
@@ -1279,7 +1346,6 @@ const formatearCantidad = (valor) => {
 
 const totalFormateado = ref('');
 
-// dentro de verSalidas, donde sumas:
 if (salidasProducto.value.length > 0) {
     let suma = 0;
     let tiene = false;
@@ -1295,6 +1361,171 @@ if (salidasProducto.value.length > 0) {
     totalFormateado.value = '';
 }
 
+async function eliminarCaja(id) {
+  const conf = await Swal.fire({
+    title: 'Eliminar registro',
+    text: '¿Seguro que deseas eliminar esta acta de Caja?',
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonText: 'Sí, eliminar'
+  });
+  if (!conf.isConfirmed) return;
+
+  try {
+    // 🔹 Usa props.proyecto.id (NO proyecto.id)
+    await axios.delete(`/proyectos/${props.proyecto.id}/amcaja/${id}`);
+
+    // 🔹 Refresca datos y recalcula totales
+    if (typeof fetchDatos === 'function') await fetchDatos();
+    if (typeof fetchMeta === 'function') {
+      fetchMeta('c');
+      fetchMeta('b');
+    }
+
+    Swal.fire('Eliminado', 'Registro de caja eliminado y saldos actualizados.', 'success');
+  } catch (err) {
+    console.error('Error al eliminar caja:', err);
+    Swal.fire('Error', err.response?.data?.message || 'No se pudo eliminar.', 'error');
+  }
+}
+
+async function eliminarBanco(id) {
+    const conf = await Swal.fire({
+        title: 'Eliminar registro',
+        text: '¿Seguro que deseas eliminar esta acta de Banco?',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: 'Sí, eliminar'
+    });
+    if (!conf.isConfirmed) return;
+
+    try {
+        await axios.delete(`/proyectos/${proyecto.id}/ambanco/${id}`);
+        await fetchDatos();
+        fetchMeta('c');
+        fetchMeta('b');
+        Swal.fire('Eliminado', 'Registro de banco eliminado y saldos actualizados.', 'success');
+    } catch (err) {
+        console.error(err);
+        Swal.fire('Error', err.response?.data?.message || 'No se pudo eliminar.', 'error');
+    }
+}
+
+async function recalcularTablaFromUI(tabla) {
+    const conf = await Swal.fire({
+        title: 'Recalcular saldos',
+        text: `¿Deseas recalcular todos los saldos de la tabla "${tabla}"?`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: 'Sí, recalcular',
+        cancelButtonText: 'Cancelar'
+    });
+    if (!conf.isConfirmed) return;
+
+    try {
+        Swal.fire({ title: 'Recalculando...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+
+        const url = `/proyectos/${props.proyecto.id}/am/recalcular`;
+        const res = await axios.post(url, { tabla });
+
+        Swal.close();
+
+        if (res.data?.ok) {
+            await Swal.fire('Listo', res.data.message || 'Recalculado correctamente.', 'success');
+
+            // actualizar la UI: si tienes fetchDatos() lo usamos; si no, recargamos props necesarios
+            if (typeof fetchDatos === 'function') {
+                await fetchDatos();
+                if (typeof fetchMeta === 'function') { fetchMeta('c'); fetchMeta('b'); }
+            } else {
+                router.reload({ only: ['caja', 'banco', 'salidas', 'inventarios'] });
+            }
+        } else {
+            Swal.fire('Error', res.data?.message || 'No se pudo recalcular', 'error');
+        }
+    } catch (err) {
+        Swal.close();
+        console.error('Error recalcularTabla:', err);
+        const msg = err.response?.data?.message || err.message || 'Error al llamar al servidor';
+        Swal.fire('Error', msg, 'error');
+    }
+}
+
+// Helpers para botones (usa buildAmTable que ya definiste)
+function onRecalcularCaja() {
+    const tabla = buildAmTable('caja'); // produce am_caja_proyecto_xxx
+    recalcularTablaFromUI(tabla);
+}
+
+function onRecalcularBanco() {
+    const tabla = buildAmTable('banco'); // produce am_banco_proyecto_xxx
+    recalcularTablaFromUI(tabla);
+}
+
+// 🔹 FORZAR RECALCULO: usar ref en lugar de computed para poder actualizar manualmente
+const aperturaCajaSnapshot = ref(0);
+const aperturaBancoSnapshot = ref(0);
+
+const aperturaCaja = computed(() => {
+    const prev = getPrevMesAnio(mesActivo.value, anioActivo.value);
+    const actasPrevias = (actasCaja?.value || []).filter(a =>
+        esDelMesCon(a.fecha, prev.mes, prev.anio)
+    );
+
+
+    // Si hay actas en el mes anterior, usamos el saldo final de ese mes
+    if (actasPrevias.length > 0) {
+        const saldo = ultimoSaldoDelMes(actasPrevias, 'fecha');
+        aperturaCajaSnapshot.value = saldo;
+        return saldo;
+    }
+
+
+    // Si NO hay actas en el mes anterior, buscar la última acta global ANTES del mes actual
+    const todas = actasCaja?.value || [];
+    const fechaLimite = new Date(anioActivo.value, mesActivo.value - 1, 1);
+
+
+    const anteriores = todas
+        .map(a => {
+            const f = parseFecha(a.fecha);
+            return { raw: a, fechaObj: f };
+        })
+        .filter(x => {
+            const valido = x.fechaObj && x.fechaObj < fechaLimite;
+            return valido;
+        })
+        .sort((a, b) => a.fechaObj - b.fechaObj);
+
+    if (anteriores.length > 0) {
+        console.log('Últimas 3 actas:', anteriores.slice(-3).map(x => ({
+            fecha: x.fechaObj.toLocaleDateString(),
+            nActa: x.raw.n_acta,
+            saldo: x.raw.saldo
+        })));
+    }
+
+    if (anteriores.length > 0) {
+        const ultimo = anteriores[anteriores.length - 1].raw;
+        const s = parseNumero(ultimo.saldo);
+        if (!isNaN(s)) {
+            aperturaCajaSnapshot.value = s;
+            return s;
+        }
+    }
+
+    // fallback final
+    aperturaCajaSnapshot.value = 0;
+    return 0;
+});
+
+const saldoFinal = computed(() => {
+    return ultimoSaldo.value;
+});
+
+const saldoFinalBanco = computed(() => {
+    return ultimoSaldoBanco.value;
+});
 
 </script>
 
@@ -1348,8 +1579,7 @@ if (salidasProducto.value.length > 0) {
                 </div>
             </div>
             <p class="text-sm text-gray-500 dark:text-gray-400">
-                Estado: {{ proyecto.estado }} — Inicio: {{ proyecto.fecha_inicio }} — Fin: {{ proyecto.fecha_fin ??
-                    'Pendiente' }}
+                Estado: {{ proyecto.estado }} — Inicio: {{ proyecto.fecha_inicio }} — Fin: {{ proyecto.fecha_fin ?? 'Pendiente' }}
             </p>
         </template>
 
@@ -1418,8 +1648,7 @@ if (salidasProducto.value.length > 0) {
                     <div class="flex flex-wrap items-center gap-2">
                         <button @click="toggleOrdenInventario"
                             class="px-4 py-2 bg-gray-700 text-white rounded-lg shadow hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-500 transition-colors duration-200 dark:bg-gray-200 dark:text-gray-800 dark:hover:bg-gray-300">
-                            📅 Ordenar: <span class="font-semibold">{{ ordenInventarioAsc ? 'Antiguos' :
-                                'Recientes' }}</span>
+                            📅 Ordenar: <span class="font-semibold">{{ ordenInventarioAsc ? 'Antiguos' : 'Recientes' }}</span>
                         </button>
                         <button @click="refrescarInventario"
                             class="px-4 py-2 bg-blue-500 text-white rounded-lg shadow hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-400 transition-colors duration-200">
@@ -1528,11 +1757,8 @@ if (salidasProducto.value.length > 0) {
 
                             <!-- Info producto (encima de la tabla) -->
                             <div class="mb-4 text-sm text-gray-700 dark:text-gray-200">
-                                <div><strong>Producto:</strong> {{ currentProducto.nombre ??
-                                    (salidasProducto[0]?.producto_label
-                                        ?? salidasProducto[0]?.producto ?? '—') }}</div>
-                                <div><strong>Código:</strong> {{ currentProducto.codigo ?? currentCodigo ??
-                                    (salidasProducto[0]?.producto_code ?? salidasProducto[0]?.codigo ?? '—') }}
+                                <div><strong>Producto:</strong> {{ currentProducto.nombre ?? (salidasProducto[0]?.producto_label ?? salidasProducto[0]?.producto ?? '—') }}</div>
+                                <div><strong>Código:</strong> {{ currentProducto.codigo ?? currentCodigo ?? (salidasProducto[0]?.producto_code ?? salidasProducto[0]?.codigo ?? '—') }}
                                 </div>
                                 <div v-if="currentProducto.stock !== null"><strong>Stock:</strong>
                                     {{ currentProducto.stock }}
@@ -1567,8 +1793,7 @@ if (salidasProducto.value.length > 0) {
                                             <td class="p-2">{{ s.lugar ?? s.site ?? '—' }}</td>
                                             <td class="p-2">{{ s.distrito ?? s.district ?? '—' }}</td>
                                             <td class="p-2">{{ formatFecha(s.fecha) }}</td>
-                                            <td class="p-2">{{ formatearCantidad(s.cantidad ?? s.qty ?? s.cant) || '—'
-                                                }}</td>
+                                            <td class="p-2">{{ formatearCantidad(s.cantidad ?? s.qty ?? s.cant) || '—' }}</td>
                                         </tr>
                                     </tbody>
                                 </table>
@@ -1621,13 +1846,23 @@ if (salidasProducto.value.length > 0) {
                         </div>
                         <div class="flex flex-col">
                             <label class="text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Encargado</label>
-                            <select v-model="filtroEncargado" class="w-48 border rounded-lg px-3 py-2 text-sm shadow-sm focus:ring-2 focus:ring-indigo-500
-           dark:bg-gray-700 dark:text-white dark:border-gray-600">
+                            <select v-model="filtroEncargado"
+                                class="w-48 border rounded-lg px-3 py-2 text-sm shadow-sm focus:ring-2 focus:ring-indigo-500 dark:bg-gray-700 dark:text-white dark:border-gray-600">
                                 <option v-for="encargado in encargadosUnicos" :key="encargado"
                                     :value="encargado.toLowerCase()">
                                     {{ encargado }}
                                 </option>
                             </select>
+                        </div>
+                        <div v-if="filtroEncargado !== 'todos' && conteoPorEstado"
+                            class="flex flex-col mt-4 p-3 border rounded-lg bg-gray-50 dark:bg-gray-800">
+                            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">
+                                Conteo por estado de {{ filtroEncargado }}
+                            </h3>
+                            <div class="flex gap-4 text-sm">
+                                <span class="text-blue-600 dark:text-blue-400">Pendientes: {{ conteoPorEstado.pendiente}}</span>
+                                <span class="text-green-600 dark:text-green-400">Aceptados: {{ conteoPorEstado.aceptado}}</span>
+                            </div>
                         </div>
 
                     </div>
@@ -1705,22 +1940,23 @@ if (salidasProducto.value.length > 0) {
                                 <td class="p-3">{{ salida.fecha }}</td>
                                 <!-- Celda del producto con tooltip -->
                                 <td class="p-3 relative cursor-pointer"
-                                    @mouseenter="mostrarTooltip(salida.producto_code)" @mouseleave="ocultarTooltip">
+                                    @mouseenter="mostrarTooltip(salida.producto_code, $event)"
+                                    @mouseleave="ocultarTooltip">
 
                                     {{ salida.producto_code }}
 
-                                    <!-- Tooltip -->
+                                <!-- Tooltip -->
                                     <transition name="fade">
-                                        <div v-if="tooltipVisible && productoTooltip?.codigo === salida.producto_code"
-                                            class="absolute left-1/2 -translate-x-1/2 top-full mt-2 
-                                                    z-50 p-3 border rounded-lg bg-gray-50 dark:bg-gray-700 
-                                                text-gray-700 dark:text-gray-50 shadow-xl w-64">
+                                        <div v-if="tooltipVisible && codigoActivo === salida.producto_code"
+                                            :class="[
+                                                'absolute left-1/2 -translate-x-1/2 z-50 p-3 border rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-50 shadow-xl w-64',
+                                                posicionTooltip === 'abajo' ? 'top-full mt-2' : 'bottom-full mb-2'
+                                            ]">
 
-                                            <p><strong>Descripción:</strong> {{ productoTooltip.descripcion }}
-                                            </p>
-                                            <p><strong>Categoría:</strong> {{ productoTooltip.categoria }}</p>
-                                            <p><strong>Stock:</strong> {{ productoTooltip.stock }}</p>
-                                            <p><strong>U.M.:</strong> {{ productoTooltip.unidad_medida }}</p>
+                                        <p><strong>Descripción:</strong> {{ productoTooltip.descripcion }}</p>
+                                        <p><strong>Categoría:</strong> {{ productoTooltip.categoria }}</p>
+                                        <p><strong>Stock:</strong> {{ productoTooltip.stock }}</p>
+                                        <p><strong>U.M.:</strong> {{ productoTooltip.unidad_medida }}</p>
                                         </div>
                                     </transition>
                                 </td>
@@ -1830,8 +2066,7 @@ if (salidasProducto.value.length > 0) {
                     <div v-if="filtroSolicitantePrecio !== 'todos'" class="flex gap-3 ml-0 md:ml-4">
                         <div class="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg shadow-sm min-w-[110px]">
                             <p class="text-xs text-gray-500 dark:text-gray-400">Productos</p>
-                            <p class="font-bold text-gray-800 dark:text-white text-lg">{{ preciosSolicitanteStats.count
-                            }}
+                            <p class="font-bold text-gray-800 dark:text-white text-lg">{{ preciosSolicitanteStats.count }}
                             </p>
                         </div>
                         <div class="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg shadow-sm min-w-[140px]">
@@ -1861,8 +2096,7 @@ if (salidasProducto.value.length > 0) {
                             <li v-for="item in props.inventarios" :key="item.id" class="flex justify-between py-1">
                                 <span class="truncate max-w-[70%]">{{ item.descripcion }} ({{ item.stock }} × S/
                                     {{ Number(item.precio ?? 0).toFixed(2) }})</span>
-                                <span class="font-semibold">S/ {{ (Number(item.stock ?? 0) * Number(item.precio ??
-                                    0)).toFixed(2) }}</span>
+                                <span class="font-semibold">S/ {{ (Number(item.stock ?? 0) * Number(item.precio ?? 0)).toFixed(2) }}</span>
                             </li>
                         </ul>
                     </div>
@@ -1870,8 +2104,7 @@ if (salidasProducto.value.length > 0) {
                     <div class="p-4 bg-green-50 dark:bg-green-900/30 rounded-xl shadow-sm">
                         <p class="text-sm text-gray-600 dark:text-gray-400">Entradas</p>
                         <p class="text-xl font-bold text-green-600 dark:text-green-300">+ S/
-                            {{ Number(totalEntradas).toFixed(2)
-                            }}
+                            {{ Number(totalEntradas).toFixed(2) }}
                         </p>
                     </div>
 
@@ -1881,27 +2114,6 @@ if (salidasProducto.value.length > 0) {
                             {{ Number(totalSalidas).toFixed(2) }}</p>
                     </div>
                 </div>
-
-                <!-- Distribución por categoría -->
-                <section class="mb-6">
-                    <h3 class="font-semibold text-gray-800 dark:text-gray-200 mb-3 flex items-center gap-2">Distribución
-                        por
-                        categoría</h3>
-                    <div class="space-y-3">
-                        <template v-for="cat in categoriasResumenArray" :key="cat.cat">
-                            <div class="flex items-center gap-3">
-                                <div class="w-36 text-sm text-gray-700 dark:text-gray-300 truncate">{{ cat.cat }}</div>
-                                <div class="flex-1 bg-gray-100 dark:bg-gray-700 rounded overflow-hidden h-3">
-                                    <div class="h-3 rounded"
-                                        :style="{ width: (Number(totalInventario) > 0 ? (Number(cat.val || 0) / Number(totalInventario)) * 100 : 0) + '%' }">
-                                    </div>
-                                </div>
-                                <div class="w-28 text-right text-sm font-semibold dark:text-white">S/ {{ Number(cat.val
-                                    || 0).toFixed(2) }}</div>
-                            </div>
-                        </template>
-                    </div>
-                </section>
 
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
                     <!-- lateral: Top N -->
@@ -1919,8 +2131,7 @@ if (salidasProducto.value.length > 0) {
                             class="list-decimal ml-5 space-y-2 text-sm text-gray-700 dark:text-white max-h-72 overflow-y-auto">
                             <li v-for="it in topItems" :key="it.id" class="flex justify-between items-center">
                                 <div class="truncate max-w-[60%]">{{ it.descripcion }}</div>
-                                <div class="text-sm font-semibold">S/ {{ (Number(it.stock ?? 0) * Number(it.precio ??
-                                    0)).toFixed(2) }}</div>
+                                <div class="text-sm font-semibold">S/ {{ (Number(it.stock ?? 0) * Number(it.precio ?? 0)).toFixed(2) }}</div>
                             </li>
                         </ol>
                     </aside>
@@ -1948,9 +2159,7 @@ if (salidasProducto.value.length > 0) {
                                     <td class="p-2">{{ item.categoria }}</td>
                                     <td class="p-2 text-right">{{ item.stock }}</td>
                                     <td class="p-2 text-right">S/ {{ Number(item.precio ?? 0).toFixed(2) }}</td>
-                                    <td class="p-2 font-semibold text-right">S/ {{ (Number(item.stock ?? 0) *
-                                        Number(item.precio
-                                            ?? 0)).toFixed(2) }}</td>
+                                    <td class="p-2 font-semibold text-right">S/ {{ (Number(item.stock ?? 0) * Number(item.precio ?? 0)).toFixed(2) }}</td>
                                     <td class="p-2">{{ item.solicitado_por ?? '-' }}</td>
                                 </tr>
 
@@ -1978,9 +2187,7 @@ if (salidasProducto.value.length > 0) {
                                                 Salidas — {{ currentProducto.nombre ?? currentCodigo ?? 'Producto' }}
                                             </h3>
                                             <p class="text-sm text-gray-500 dark:text-gray-400">
-                                                Código: <span class="font-medium text-gray-700 dark:text-gray-200">{{
-                                                    currentProducto.codigo
-                                                    ?? currentCodigo }}</span>
+                                                Código: <span class="font-medium text-gray-700 dark:text-gray-200">{{ currentProducto.codigo ?? currentCodigo }}</span>
                                                 <span v-if="currentProducto.stock !== null"> • Stock:
                                                     <strong>{{ currentProducto.stock }}</strong></span>
                                             </p>
@@ -2027,14 +2234,11 @@ if (salidasProducto.value.length > 0) {
                                                         class="border-t dark:border-gray-700">
                                                         <td class="p-2">
                                                             <!-- intentamos formatear fecha si existe -->
-                                                            <span>{{ formatFecha ? formatFecha(s.fecha ?? s.created_at
-                                                                ?? s.date) : (s.fecha ?? s.created_at ?? '-') }}</span>
+                                                            <span>{{ formatFecha ? formatFecha(s.fecha ?? s.created_at ?? s.date) : (s.fecha ?? s.created_at ?? '-') }}</span>
                                                         </td>
                                                         <td class="p-2">{{ s.nombre ?? s.tipo ?? '-' }}</td>
-                                                        <td class="p-2 font-medium">{{ s.cantidad ?? s.qty ?? s.cant ??
-                                                            s.cantidad_salida ?? '-' }}</td>
-                                                        <td class="p-2">{{ s.um ?? s.solicitado_por ?? s.usuario ?? '-'
-                                                            }}</td>
+                                                        <td class="p-2 font-medium">{{ s.cantidad ?? s.qty ?? s.cant ?? s.cantidad_salida ?? '-' }}</td>
+                                                        <td class="p-2">{{ s.um ?? s.solicitado_por ?? s.usuario ?? '-' }}</td>
                                                         <td class="p-2">{{ s.cantidad ?? s.descripcion ?? '-' }}</td>
                                                     </tr>
                                                 </tbody>
@@ -2124,14 +2328,24 @@ if (salidasProducto.value.length > 0) {
                                 <button @click="exportarExcel(mesActivo, anioActivo)"
                                     class="px-3 py-1.5 rounded bg-yellow-600 text-white">Exportar a Excel
                                 </button>
+                                <!-- botón para recalcular caja/banco (solo admin) -->
+                                <button v-if="authUser && authUser.role === 'admin'" @click="onRecalcularCaja"
+                                    class="px-3 py-1.5 rounded bg-red-600 text-white">
+                                    Recalcular Caja
+                                </button>
+
+                                <button v-if="authUser && authUser.role === 'admin'" @click="onRecalcularBanco"
+                                    class="px-3 py-1.5 rounded bg-red-600 text-white">
+                                    Recalcular Banco
+                                </button>
+
                             </div>
                         </div>
                     </div>
 
                     <!-- Línea informativa -->
                     <div class="text-sm text-gray-500 mb-2">
-                        Mostrando: <strong>{{ tablaVisibleLabel }}</strong> — {{ nombreMes(mesActivo) }} {{ anioActivo
-                        }}
+                        Mostrando: <strong>{{ tablaVisibleLabel }}</strong> — {{ nombreMes(mesActivo) }} {{ anioActivo }}
                     </div>
 
                     <!-- Tablas -->
@@ -2212,24 +2426,22 @@ if (salidasProducto.value.length > 0) {
                                         <td class="p-3 text-gray-500 italic" colspan="9">No hay registros en Caja.</td>
                                     </tr>
 
-                                    <!-- ÚLTIMO SALDO REGISTRADO (solo uno) -->
+                                    <!-- ÚLTIMO SALDO REGISTRADO -->
                                     <tr class="bg-gray-50 dark:bg-gray-800 text-sm dark:text-white">
-                                        <td class="p-3" colspan="5">Último saldo registrado</td>
-                                        <td class="p-3"></td>
-                                        <td class="p-3"></td>
-                                        <td class="p-3 font-semibold">{{ formatNumber(ultimoSaldo) }}</td>
-                                        <td v-if="authUser && (authUser.role === 'admin' || authUser.role === 'equipo')"
-                                            class="p-3"></td>
+                                    <td class="p-3" colspan="5">Último saldo registrado</td>
+                                    <td class="p-3"></td>
+                                    <td class="p-3"></td>
+                                    <td class="p-3 font-semibold">{{ formatNumber(ultimoSaldo) }}</td>
+                                    <td v-if="authUser && (authUser.role === 'admin' || authUser.role === 'equipo')" class="p-3"></td>
                                     </tr>
 
-                                    <!-- TOTALES DEL MES -->
-                                    <tr class="border-t bg-gray-50 dark:bg-gray-800 font-semibold dark:text-white">
-                                        <td class="p-3" colspan="5">Totales del mes — Movimientos</td>
-                                        <td class="p-3 text-green-700">{{ formatNumber(ingresosCajaTotal) }}</td>
-                                        <td class="p-3 text-red-600">{{ formatNumber(egresosCajaTotal) }}</td>
-                                        <td class="p-3">{{ formatNumber(movimientosCaja) }}</td>
-                                        <td v-if="authUser && (authUser.role === 'admin' || authUser.role === 'equipo')"
-                                            class="p-3"></td>
+                                    <!-- SALDO FINAL DEL MES -->
+                                    <tr class="border-t bg-gray-200 dark:bg-gray-700 font-bold dark:text-white">
+                                    <td class="p-3" colspan="5">💰 Saldo final — {{ nombreMes(mesActivo) }} {{ anioActivo }}</td>
+                                    <td class="p-3"></td>
+                                    <td class="p-3"></td>
+                                    <td class="p-3 text-blue-700 dark:text-blue-400">{{ formatNumber(saldoFinal) }}</td>
+                                    <td v-if="authUser && (authUser.role === 'admin' || authUser.role === 'equipo')" class="p-3"></td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -2249,8 +2461,7 @@ if (salidasProducto.value.length > 0) {
                                     </div>
 
                                     <div class="mb-4 text-sm text-gray-700 dark:text-gray-200">
-                                        <div><strong>N° Acta:</strong> {{ currentActa?.n_acta ?? currentActa?.id ??
-                                            '—' }}
+                                        <div><strong>N° Acta:</strong> {{ currentActa?.n_acta ?? currentActa?.id ?? '—' }}
                                         </div>
                                         <div><strong>Fecha:</strong> {{ formatFecha(currentActa?.fecha) }}</div>
                                         <div><strong>Descripción:</strong> {{ currentActa?.descripcion ?? '—' }}</div>
@@ -2280,11 +2491,8 @@ if (salidasProducto.value.length > 0) {
                                                     <!-- Nombre / categoría -->
                                                     <td class="p-2">
                                                         <div v-if="v.inventario">
-                                                            <div class="font-semibold">{{ v.inventario.descripcion ??
-                                                                v.inventario.codigo ?? '—' }}</div>
-                                                            <div class="text-xs text-gray-500">{{ v.inventario.categoria
-                                                                ??
-                                                                '—' }}
+                                                            <div class="font-semibold">{{ v.inventario.descripcion ?? v.inventario.codigo ?? '—' }}</div>
+                                                            <div class="text-xs text-gray-500">{{ v.inventario.categoria ?? '—' }}
                                                             </div>
                                                         </div>
                                                         <div v-else>
@@ -2305,9 +2513,7 @@ if (salidasProducto.value.length > 0) {
                                                     <!-- Cantidad / entradas / stock -->
                                                     <td class="p-2">
                                                         <div v-if="v.inventario">
-                                                            {{ v.inventario.entradas ?? v.inventario.stock ?? v.cantidad
-                                                                ??
-                                                                '—' }}
+                                                            {{ v.inventario.entradas ?? v.inventario.stock ?? v.cantidad ?? '—' }}
                                                         </div>
                                                         <div v-else>
                                                             {{ v.cantidad ?? '—' }}
@@ -2317,21 +2523,15 @@ if (salidasProducto.value.length > 0) {
                                                     <!-- Detalles: precio, fecha, stock -->
                                                     <td class="p-2">
                                                         <div v-if="v.inventario">
-                                                            <div>Precio: <strong>{{ typeof v.inventario.precio !==
-                                                                'undefined' ?
-                                                                formatNumber(v.inventario.precio) : '—' }}</strong>
+                                                            <div>Precio: <strong>{{ typeof v.inventario.precio !== 'undefined' ? formatNumber(v.inventario.precio) : '—' }}</strong>
                                                             </div>
                                                             <div class="text-xs text-gray-500">Fecha:
-                                                                {{ v.inventario.fecha ?
-                                                                    formatFecha(v.inventario.fecha) : '—' }}</div>
+                                                                {{ v.inventario.fecha ?  formatFecha(v.inventario.fecha) : '—' }}</div>
                                                             <div class="text-xs text-gray-500">Stock:
-                                                                {{ v.inventario.stock ??
-                                                                    '—' }}</div>
+                                                                {{ v.inventario.stock ?? '—' }}</div>
                                                         </div>
                                                         <div v-else>
-                                                            <div class="text-xs">{{ v.meta ? (typeof v.meta === 'object'
-                                                                ?
-                                                                JSON.stringify(v.meta) : v.meta) : '' }}</div>
+                                                            <div class="text-xs">{{ v.meta ? (typeof v.meta === 'object' ? JSON.stringify(v.meta) : v.meta) : '' }}</div>
                                                         </div>
                                                     </td>
 
@@ -2342,8 +2542,7 @@ if (salidasProducto.value.length > 0) {
                                     </div>
 
                                     <div class="mt-4 text-right text-sm text-gray-600 dark:text-gray-400">
-                                        <span><strong>Total vinculaciones:</strong> {{ vinculacionesActuales?.length ??
-                                            0 }}</span>
+                                        <span><strong>Total vinculaciones:</strong> {{ vinculacionesActuales?.length ?? 0 }}</span>
                                     </div>
                                 </div>
                             </div>
@@ -2463,8 +2662,7 @@ if (salidasProducto.value.length > 0) {
                                     </div>
 
                                     <div class="mb-4 text-sm text-gray-700 dark:text-gray-200">
-                                        <div><strong>N° Acta:</strong> {{ currentActa?.n_acta ?? currentActa?.id ??
-                                            '—' }}
+                                        <div><strong>N° Acta:</strong> {{ currentActa?.n_acta ?? currentActa?.id ?? '—' }}
                                         </div>
                                         <div><strong>Fecha:</strong> {{ formatFecha(currentActa?.fecha) }}</div>
                                         <div><strong>Descripción:</strong> {{ currentActa?.descripcion ?? '—' }}</div>
@@ -2494,11 +2692,8 @@ if (salidasProducto.value.length > 0) {
                                                     <!-- Nombre / categoría -->
                                                     <td class="p-2">
                                                         <div v-if="v.inventario">
-                                                            <div class="font-semibold">{{ v.inventario.descripcion ??
-                                                                v.inventario.codigo ?? '—' }}</div>
-                                                            <div class="text-xs text-gray-500">{{ v.inventario.categoria
-                                                                ??
-                                                                '—' }}
+                                                            <div class="font-semibold">{{ v.inventario.descripcion ?? v.inventario.codigo ?? '—' }}</div>
+                                                            <div class="text-xs text-gray-500">{{ v.inventario.categoria ?? '—' }}
                                                             </div>
                                                         </div>
                                                         <div v-else>
@@ -2519,9 +2714,7 @@ if (salidasProducto.value.length > 0) {
                                                     <!-- Cantidad / entradas / stock -->
                                                     <td class="p-2">
                                                         <div v-if="v.inventario">
-                                                            {{ v.inventario.entradas ?? v.inventario.stock ?? v.cantidad
-                                                                ??
-                                                                '—' }}
+                                                            {{ v.inventario.entradas ?? v.inventario.stock ?? v.cantidad ?? '—' }}
                                                         </div>
                                                         <div v-else>
                                                             {{ v.cantidad ?? '—' }}
@@ -2531,21 +2724,16 @@ if (salidasProducto.value.length > 0) {
                                                     <!-- Detalles: precio, fecha, stock -->
                                                     <td class="p-2">
                                                         <div v-if="v.inventario">
-                                                            <div>Precio: <strong>{{ typeof v.inventario.precio !==
-                                                                'undefined' ?
-                                                                formatNumber(v.inventario.precio) : '—' }}</strong>
+                                                            <div>Precio: <strong>{{ typeof v.inventario.precio !== 'undefined' ? formatNumber(v.inventario.precio) : '—' }}</strong>
                                                             </div>
                                                             <div class="text-xs text-gray-500">Fecha:
-                                                                {{ v.inventario.fecha ? formatFecha(v.inventario.fecha)
-                                                                    : '—' }}
+                                                                {{ v.inventario.fecha ? formatFecha(v.inventario.fecha) : '—' }}
                                                             </div>
                                                             <div class="text-xs text-gray-500">Stock:
                                                                 {{ v.inventario.stock ?? '—' }}</div>
                                                         </div>
                                                         <div v-else>
-                                                            <div class="text-xs">{{ v.meta ? (typeof v.meta === 'object'
-                                                                ?
-                                                                JSON.stringify(v.meta) : v.meta) : '' }}</div>
+                                                            <div class="text-xs">{{ v.meta ? (typeof v.meta === 'object' ? JSON.stringify(v.meta) : v.meta) : '' }}</div>
                                                         </div>
                                                     </td>
 
@@ -2556,8 +2744,7 @@ if (salidasProducto.value.length > 0) {
                                     </div>
 
                                     <div class="mt-4 text-right text-sm text-gray-600 dark:text-gray-400">
-                                        <span><strong>Total vinculaciones:</strong> {{ vinculacionesActuales?.length ??
-                                            0 }}</span>
+                                        <span><strong>Total vinculaciones:</strong> {{ vinculacionesActuales?.length ??  0 }}</span>
                                     </div>
                                 </div>
                             </div>

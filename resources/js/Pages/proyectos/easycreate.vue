@@ -428,7 +428,6 @@ onMounted(async () => {
       }
     });
 
-    console.log('last-prefill response:', res?.data);
     if (res?.data) {
       const data = res.data;
 

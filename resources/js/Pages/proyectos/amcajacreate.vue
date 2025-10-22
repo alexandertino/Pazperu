@@ -36,10 +36,9 @@ const form = ref({
   fecha: '',
   descripcion: '',
   presupuestario: '',
-  actividad: 'A.',
+  actividad: '',
   ingresos: null,
   egresos: null,
-  accion: null,
   inventario: false,
 })
 
@@ -56,13 +55,6 @@ const submitting = ref(false)
 const successMessage = ref('')
 const submitError = ref('')
 
-const accionOptions = [
-  { value: 'transf', label: 'Transferencia' },
-  { value: 'sueldo', label: 'Sueldo' },
-  { value: 'gb', label: 'GB' },
-  { value: 'ch', label: 'CH' },
-  { value: 'ingreso', label: 'Ingreso' },
-]
 
 function formatCurrency(v) {
   const n = Number(v || 0)
@@ -202,9 +194,7 @@ function validateForm() {
     errors.value.descripcion = 'Descripción debe tener máximo 50 caracteres.'
   }
 
-  if ((res.ok && res.type === 'b') && form.value.accion && !accionOptions.some(o => o.value === form.value.accion)) {
-    errors.value.accion = 'Acción inválida.'
-  }
+
 
   return Object.keys(errors.value).length === 0
 }
@@ -308,7 +298,8 @@ async function submitPayload(payload) {
   try {
     submitting.value = true
     const res = await axios.post(`/proyectos/${proyectoId}/am/guardar`, payload)
-    // comportamiento original al recibir redirect
+
+    // comportamiento original al recibir redirect (inventario)
     if (res.data && res.data.redirect) {
       await Swal.fire({
         title: 'Redirigiendo...',
@@ -322,6 +313,7 @@ async function submitPayload(payload) {
       return
     }
 
+    // Mensaje de éxito (igual que antes)
     await Swal.fire({
       title: 'Guardado',
       text: res.data.table
@@ -333,8 +325,30 @@ async function submitPayload(payload) {
       timerProgressBar: true,
     })
 
+    // reset form (como antes)
     resetForm()
-    window.location.reload()
+
+    // EN LUGAR DE hacer window.location.reload(), intentamos:
+    // 1) usar fetchDatos() si está disponible (actualiza caja/banco vía AJAX)
+    // 2) si falla o no existe, hacemos un reload selectivo de Inertia (solo props necesarios)
+    if (typeof fetchDatos === 'function') {
+      try {
+        await fetchDatos()
+        if (typeof fetchMeta === 'function') {
+          fetchMeta('c')
+          fetchMeta('b')
+        }
+      } catch (err) {
+        // fallback a recarga selectiva si fetchDatos falla
+        router.reload({ only: ['caja', 'banco', 'salidas', 'inventarios'] })
+      }
+    } else {
+      // si no hay fetchDatos (este componente depende de props de Inertia),
+      // recargamos solo los props importantes sin recargar toda la app
+      router.reload({ only: ['caja', 'banco', 'salidas', 'inventarios'] })
+    }
+
+    successMessage.value = 'Guardado correctamente y saldos actualizados.'
   } catch (err) {
     console.error("Error submit (entero):", err)
     const resp = err.response?.data
@@ -356,6 +370,7 @@ async function submitPayload(payload) {
     submitting.value = false
   }
 }
+
 
 /**
  * onSubmit: valida y solicita confirmación antes de llamar a submitPayload.
@@ -400,7 +415,6 @@ async function onSubmit() {
     ingresos: form.value.ingresos != null ? Number(form.value.ingresos) : 0,
     egresos: form.value.egresos != null ? Number(form.value.egresos) : 0,
     saldo: newSaldo.value,
-    accion: prefixToSend === 'b' ? (form.value.accion || null) : null,
     tabla: targetTable,
     proyecto_id: proyectoId,
     inventario: (form.value.inventario === true || form.value.inventario === 'true' || form.value.inventario === 1)
@@ -442,7 +456,6 @@ function resetForm() {
     actividad: '',
     ingresos: null,
     egresos: null,
-    accion: null,
     inventario: false,
   }
   errors.value = {}
@@ -582,17 +595,7 @@ const submitButtonLabel = computed(() => {
                 class="mt-1 w-full p-2 border rounded bg-gray-100 dark:text-white dark:bg-gray-700" />
             </div>
 
-            <div v-if="currentType === 'b'" class="md:col-span-2 p-4  rounded bg-gray-50 dark:bg-gray-700">
-              <label class="block text-sm font-medium mb-2 dark:text-white ">Acción (solo para B)</label>
-              <div class="flex flex-wrap gap-2">
-                <label v-for="opt in accionOptions" :key="opt.value"
-                  class="inline-flex items-center gap-2 p-2 border dark:text-white dark:border-gray-800 rounded cursor-pointer">
-                  <input type="radio" v-model="form.accion" :value="opt.value" />
-                  <span class="text-sm">{{ opt.label }}</span>
-                </label>
-              </div>
-              <p v-if="errors.accion" class="text-red-500 text-sm mt-1">{{ errors.accion }}</p>
-            </div>
+            
 
             <div class="md:col-span-2 flex flex-col gap-2">
               <!-- Radios Requiere acta (sin bg) -->
