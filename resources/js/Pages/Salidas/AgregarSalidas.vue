@@ -49,18 +49,7 @@ const mostrarPersonas = ref(false);
 const mostrarSugerencias = ref(false);
 
 /* ---------- util / helpers ---------- */
-const normalizeProduct = (p = {}) => ({
-  code: (p.code || p.codigo || p.id || '')?.toString(),
-  producto: (p.producto || p.descripcion || p.name || '')?.toString(),
-  descripcion: (p.descripcion || p.producto || p.name || '')?.toString(),
-  um: (p.um || p.unidad || p.unidad_medida || p.uom || '')?.toString(),
-  stock: (typeof p.stock !== 'undefined')
-    ? Number(p.stock)
-    : (typeof p.cantidad !== 'undefined' ? Number(p.cantidad) : null),
-  solicitado_por: (p.solicitado_por || p.solicitante || p.requested_by || '')?.toString(),
-  categoria: (p.categoria || p.categoria_id || p.category || '')?.toString(),
-  raw: p
-});
+
 
 const volverATabla = () => {
   window.location.href = `/proyectos/${props.proyecto.id}/inventario-salidas`;
@@ -166,6 +155,103 @@ const fetchUltimoActa = async () => {
     } catch (e) {
       form.codigo1 = form.codigo1 || '1';
     }
+  }
+};
+/* ---------------- parseDateToISODate (más robusta) ---------------- */
+const parseDateToISODate = (v) => {
+  if (v === null || typeof v === 'undefined' || v === '') return null;
+
+  // Si ya es YYYY-MM-DD
+  if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+
+  // Si viene con hora ISO: 2025-10-22T14:23:05Z
+  if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(v)) {
+    try {
+      const d = new Date(v);
+      if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+    } catch (e) { /* ignore */ }
+  }
+
+  // Si viene como timestamp numérico (segundos o ms)
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    const d = (String(v).length === 10) ? new Date(v * 1000) : new Date(v);
+    if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  }
+
+  // Intentar crear Date desde string libre
+  try {
+    const d = new Date(v);
+    if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  } catch (e) { /* ignore */ }
+
+  return null;
+};
+
+/* ---------------- normalizeProduct (buscar muchos nombres de fecha) ---------------- */
+const normalizeProduct = (p = {}) => {
+  // nombres potenciales usados por tu backend para la fecha
+  const dateCandidates = [
+    p.fecha, p.created_at, p.fecha_registro, p.date, p.createdAt,
+    p.timestamp, p.registered_at, p.fecha_creacion, p.fechaAlta, p.created
+  ];
+
+  // buscar primer candidato no nulo
+  let rawDate = null;
+  for (const v of dateCandidates) {
+    if (typeof v !== 'undefined' && v !== null && v !== '') {
+      rawDate = v;
+      break;
+    }
+  }
+
+  return {
+    code: (p.code || p.codigo || p.id || '')?.toString(),
+    producto: (p.producto || p.descripcion || p.name || '')?.toString(),
+    descripcion: (p.descripcion || p.producto || p.name || '')?.toString(),
+    um: (p.um || p.unidad || p.unidad_medida || p.uom || '')?.toString(),
+    stock: (typeof p.stock !== 'undefined')
+      ? Number(p.stock)
+      : (typeof p.cantidad !== 'undefined' ? Number(p.cantidad) : null),
+    solicitado_por: (p.solicitado_por || p.solicitante || p.requested_by || '')?.toString(),
+    categoria: (p.categoria || p.categoria_id || p.category || '')?.toString(),
+    // normalizamos la fecha (YYYY-MM-DD) si se encuentra
+    fecha: parseDateToISODate(rawDate),
+    // mantenemos raw por si quieres inspeccionar
+    raw: p
+  };
+};
+
+/* ---------------- fetchInventory (asegurar map y log para depurar) ---------------- */
+const fetchInventory = async (query = '') => {
+  inventoryLoading.value = true;
+  inventoryError.value = null;
+  try {
+    const url = `/proyectos/${props.proyecto.id}/productos${query ? ('?q=' + encodeURIComponent(query)) : ''}`;
+    const res = await axios.get(url);
+
+    // INSPECCIÓN: log raw response para ver nombres de campo
+    console.debug('fetchInventory - raw data', res.data);
+
+    // Mapear con normalizeProduct — importante
+    inventory.value = Array.isArray(res.data) ? res.data.map(normalizeProduct) : [];
+
+    // Log de resultado normalizado para comprobar 'fecha'
+    console.debug('fetchInventory - normalized inventory', inventory.value);
+
+    // poblar opciones de filtros (sin duplicados)
+    const cats = new Set();
+    const sols = new Set();
+    inventory.value.forEach(i => { if (i.categoria) cats.add(String(i.categoria)); if (i.solicitado_por) sols.add(String(i.solicitado_por)); });
+    inventoryCategorias.value = Array.from(cats).sort();
+    inventorySolicitantes.value = Array.from(sols).sort();
+  } catch (err) {
+    console.error('fetchInventory error', err);
+    inventoryError.value = err?.response?.data?.message || err?.message || 'Error';
+    inventory.value = [];
+    inventoryCategorias.value = [];
+    inventorySolicitantes.value = [];
+  } finally {
+    inventoryLoading.value = false;
   }
 };
 
@@ -423,29 +509,6 @@ const debounce = (fn, wait = 300) => {
   return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), wait); };
 };
 
-const fetchInventory = async (query = '') => {
-  inventoryLoading.value = true;
-  inventoryError.value = null;
-  try {
-    const url = `/proyectos/${props.proyecto.id}/productos${query ? ('?q=' + encodeURIComponent(query)) : ''}`;
-    const res = await axios.get(url);
-    inventory.value = Array.isArray(res.data) ? res.data.map(normalizeProduct) : [];
-
-    // poblar opciones de filtros (sin duplicados)
-    const cats = new Set();
-    const sols = new Set();
-    inventory.value.forEach(i => { if (i.categoria) cats.add(String(i.categoria)); if (i.solicitado_por) sols.add(String(i.solicitado_por)); });
-    inventoryCategorias.value = Array.from(cats).sort();
-    inventorySolicitantes.value = Array.from(sols).sort();
-  } catch (err) {
-    inventoryError.value = err?.response?.data?.message || err?.message || 'Error';
-    inventory.value = [];
-    inventoryCategorias.value = [];
-    inventorySolicitantes.value = [];
-  } finally {
-    inventoryLoading.value = false;
-  }
-};
 
 const debouncedFetchInventory = debounce((q) => { fetchInventory(q); }, 300);
 const openInventory = async () => { showInventoryModal.value = true; inventoryFilter.q = ''; await nextTick(); fetchInventory(); };
@@ -456,8 +519,45 @@ const selectInventoryProduct = (p) => {
   form.producto_label = normalized.producto || normalized.descripcion || '';
   form.um = normalized.um || form.um;
   productoEncontrado.value = normalized;
+  if (normalized.fecha) {
+    form.fecha = normalized.fecha;
+  }
   showInventoryModal.value = false;
   nextTick(() => { const el = document.querySelector('#producto_code'); if (el) el.focus(); });
+};
+
+
+// Valida las fechas, normaliza a YYYY-MM-DD, y vuelve a traer inventario (si tu backend acepta params desde/hasta)
+const filtrarPorFechas = async () => {
+  const desde = parseDateToISODate(inventoryFilter.fecha_desde);
+  const hasta = parseDateToISODate(inventoryFilter.fecha_hasta);
+
+  if (!desde && !hasta) {
+    Swal.fire('Fechas inválidas', 'Selecciona una fecha "Desde" o "Hasta" válida.', 'warning');
+    return;
+  }
+
+  if (desde && hasta && new Date(desde) > new Date(hasta)) {
+    Swal.fire('Rango inválido', 'La fecha "Desde" no puede ser posterior a la fecha "Hasta".', 'warning');
+    return;
+  }
+
+  // Guardamos en formato ISO (YYYY-MM-DD) para que el computed y la UI usen valores robustos
+  inventoryFilter.fecha_desde = desde;
+  inventoryFilter.fecha_hasta = hasta;
+
+  // Intentar pedir al servidor con los parámetros (si tu endpoint los soporta).
+  // Si no los soporta, este fetch no romperá nada y el filtro se aplicará cliente-side en computed (ver abajo).
+  const params = new URLSearchParams();
+  if (inventoryFilter.q) params.append('q', inventoryFilter.q);
+  if (desde) params.append('desde', desde);
+  if (hasta) params.append('hasta', hasta);
+  if (inventoryFilter.solicitado_por) params.append('solicitado_por', inventoryFilter.solicitado_por);
+  if (inventoryFilter.categoria) params.append('categoria', inventoryFilter.categoria);
+  if (inventoryFilter.onlyAvailable) params.append('onlyAvailable', '1');
+
+  // fetchInventory espera el string query (ej: 'q=foo&desde=2025-01-01')
+  await fetchInventory(params.toString());
 };
 
 // filtros robustos: evita bugs cuando categoria/solicitante son null/undefined
@@ -466,6 +566,20 @@ const filteredInventory = computed(() => {
   const cat = String(inventoryFilter.categoria || '').toLowerCase().trim();
   const sol = String(inventoryFilter.solicitado_por || '').toLowerCase().trim();
   const onlyAvailable = Boolean(inventoryFilter.onlyAvailable);
+
+  // Normalizar las fechas del filtro a ISO (si vienen en otro formato)
+  const desdeIso = parseDateToISODate(inventoryFilter.fecha_desde);
+  const hastaIso = parseDateToISODate(inventoryFilter.fecha_hasta);
+
+  // Función de ayuda para comparar fechas (itemFecha y desde/hasta son YYYY-MM-DD)
+  const withinDateRange = (itemFecha) => {
+    if (!itemFecha) return (desdeIso === null && hastaIso === null); // si filtro por fechas definido y item no tiene fecha -> excluir
+    if (!desdeIso && !hastaIso) return true;
+    const itemTs = new Date(itemFecha + 'T00:00:00').getTime();
+    if (desdeIso && itemTs < new Date(desdeIso + 'T00:00:00').getTime()) return false;
+    if (hastaIso && itemTs > new Date(hastaIso + 'T23:59:59').getTime()) return false;
+    return true;
+  };
 
   let arr = inventory.value.filter(item => {
     // Normalizar campos defensivamente
@@ -476,19 +590,26 @@ const filteredInventory = computed(() => {
     if (cat && !(String(item.categoria || '').toLowerCase().includes(cat))) return false;
     if (sol && !(String(item.solicitado_por || '').toLowerCase().includes(sol))) return false;
 
+    // Filtrar por fecha (si al menos una fecha fue definida en el filtro)
+    if (desdeIso || hastaIso) {
+      if (!withinDateRange(item.fecha)) return false;
+    }
+
     if (!q) return true;
     const hay = (
       (item.producto || '') + ' ' +
       (item.descripcion || '') + ' ' +
       (String(item.code || item.id || '') || '') + ' ' +
       (String(item.categoria || '') || '') + ' ' +
-      (String(item.solicitado_por || '') || '')
+      (String(item.solicitado_por || '') || '') + ' ' +
+      (String(item.fecha || '') || '')
     ).toLowerCase();
     return hay.includes(q);
   });
 
   return arr;
 });
+
 
 watch(() => inventoryFilter.q, (q) => { debouncedFetchInventory(String(q || '').trim()); });
 
@@ -828,6 +949,8 @@ async function actaPdf2_downloadPdfFile() {
     try { document.body.removeChild(container); } catch (e) { }
   }
 }
+
+
 </script>
 
 <template>
@@ -1116,7 +1239,29 @@ async function actaPdf2_downloadPdfFile() {
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-200">Disponible</label>
                 <input type="checkbox" v-model="inventoryFilter.onlyAvailable" class="mt-2" />
               </div>
+
+              <!-- 🆕 Filtro por fechas -->
+              <div class="col-span-3 flex gap-2">
+                <div class="flex-1">
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-200">Desde</label>
+                  <input type="date" v-model="inventoryFilter.fecha_desde"
+                    class="w-full p-2 border rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100" />
+                </div>
+                <div class="flex-1">
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-200">Hasta</label>
+                  <input type="date" v-model="inventoryFilter.fecha_hasta"
+                    class="w-full p-2 border rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100" />
+                </div>
+                <div class="flex items-end">
+                  <button @click="filtrarPorFechas"
+                    class="px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition">
+                    Filtrar
+                  </button>
+                </div>
+              </div>
             </div>
+
+
 
             <div v-if="inventoryError" class="text-sm text-red-600 mb-2">{{ inventoryError }}</div>
             <div v-if="inventoryLoading" class="text-sm  mb-2 text-gray-700 dark:text-gray-300">Cargando inventario…
@@ -1133,30 +1278,54 @@ async function actaPdf2_downloadPdfFile() {
                     <th class="px-4 py-2 text-left">Stock</th>
                     <th class="px-4 py-2 text-left">Solicitado por</th>
                     <th class="px-4 py-2 text-left">Categoría</th>
+                    <th class="px-4 py-2 text-left">Fecha</th>
                     <th class="px-4 py-2 text-left">Acción</th>
                   </tr>
                 </thead>
+
                 <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200">
                   <tr v-for="item in filteredInventory" :key="item.code || item.raw?.id"
                     class="hover:bg-gray-100 dark:hover:bg-gray-700">
-                    <td class="px-4 py-3 align-top text-sm font-medium text-gray-900 dark:text-gray-100">{{
-                      item.producto || item.descripcion || '—' }}</td>
-                    <td class="px-4 py-3 align-top text-sm text-gray-700 dark:text-gray-300">{{ item.code ||
-                      item.raw?.id || '—' }}</td>
-                    <td class="px-4 py-3 align-top text-sm text-gray-700 dark:text-gray-300">{{ item.um || '—' }}</td>
-                    <td class="px-4 py-3 align-top text-sm text-gray-700 dark:text-gray-300">{{ item.stock ?? '—' }}
+                    <td class="px-4 py-3 align-top text-sm font-medium text-gray-900 dark:text-gray-100">
+                      {{ item.producto || item.descripcion || '—' }}
                     </td>
-                    <td class="px-4 py-3 align-top text-sm text-gray-700 dark:text-gray-300">{{ item.solicitado_por ||
-                      '—' }}</td>
-                    <td class="px-4 py-3 align-top text-sm text-gray-700 dark:text-gray-300">{{ item.categoria || '—' }}
+
+                    <td class="px-4 py-3 align-top text-sm text-gray-700 dark:text-gray-300">
+                      {{ item.code || item.raw?.id || '—' }}
                     </td>
+
+                    <td class="px-4 py-3 align-top text-sm text-gray-700 dark:text-gray-300">
+                      {{ item.um || '—' }}
+                    </td>
+
+                    <td class="px-4 py-3 align-top text-sm text-gray-700 dark:text-gray-300">
+                      {{ item.stock ?? '—' }}
+                    </td>
+
+                    <td class="px-4 py-3 align-top text-sm text-gray-700 dark:text-gray-300">
+                      {{ item.solicitado_por || '—' }}
+                    </td>
+
+                    <td class="px-4 py-3 align-top text-sm text-gray-700 dark:text-gray-300">
+                      {{ item.categoria || '—' }}
+                    </td>
+
+                    <!-- 🔹 Nueva celda de Fecha -->
+                    <td class="px-4 py-3 align-top text-sm text-gray-700 dark:text-gray-300">
+                      {{ item.fecha ? (new Date(item.fecha).toLocaleDateString()) : '—' }}
+                    </td>
+
+
                     <td class="px-4 py-3 align-top">
                       <button @click="selectInventoryProduct(item)"
-                        class="px-3 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-sm">Seleccionar</button>
+                        class="px-3 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-sm">
+                        Seleccionar
+                      </button>
                     </td>
                   </tr>
                 </tbody>
               </table>
+
             </div>
 
             <div v-if="!inventoryLoading && filteredInventory.length === 0"

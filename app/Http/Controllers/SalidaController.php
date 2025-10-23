@@ -751,6 +751,13 @@ class SalidaController extends Controller
             'categoria' => 'categoria',
             'categoria_id' => 'categoria_id',
             'category' => 'category',
+            'fecha' => 'fecha',
+            'fecha_registro' => 'fecha_registro',
+            'created_at' => 'created_at',
+            'created' => 'created',
+            'registered_at' => 'registered_at',
+            'timestamp' => 'timestamp',
+            'fecha_creacion' => 'fecha_creacion',
         ];
 
         $select = [];
@@ -774,7 +781,7 @@ class SalidaController extends Controller
 
         $qb = DB::table($tablaInventario)->select($select);
 
-        // Búsqueda libre: usamos LOWER(...) y CAST(... AS CHAR) para compatibilidad MySQL
+        // Búsqueda libre
         if ($q) {
             $qClean = trim($q);
             $like = '%' . mb_strtolower($qClean) . '%';
@@ -787,7 +794,6 @@ class SalidaController extends Controller
                     $inner->orWhereRaw('LOWER(descripcion) LIKE ?', [$like]);
                 }
                 if (in_array('codigo', $select)) {
-                    // si codigo puede ser numérico, casteamos a CHAR para MySQL
                     $inner->orWhereRaw('LOWER(CAST(codigo AS CHAR)) LIKE ?', [$like]);
                 }
                 if (in_array('solicitado_por', $select)) {
@@ -804,6 +810,13 @@ class SalidaController extends Controller
                 }
                 if (in_array('category', $select)) {
                     $inner->orWhereRaw('LOWER(category) LIKE ?', [$like]);
+                }
+
+                if (in_array('fecha', $select)) {
+                    $inner->orWhereRaw('LOWER(CAST(fecha AS CHAR)) LIKE ?', [$like]);
+                }
+                if (in_array('created_at', $select)) {
+                    $inner->orWhereRaw('LOWER(CAST(created_at AS CHAR)) LIKE ?', [$like]);
                 }
             });
         }
@@ -851,6 +864,30 @@ class SalidaController extends Controller
 
         $normalized = $rows->map(function ($r) {
             $r = (array) $r;
+
+            // buscar primer campo de fecha disponible en el raw
+            $dateCandidates = [
+                'fecha', 'fecha_registro', 'created_at', 'created', 'registered_at', 'timestamp', 'fecha_creacion'
+            ];
+
+            $foundDate = null;
+            foreach ($dateCandidates as $dc) {
+                if (array_key_exists($dc, $r) && !is_null($r[$dc]) && $r[$dc] !== '') {
+                    $foundDate = $r[$dc];
+                    break;
+                }
+            }
+
+            // formatear a YYYY-MM-DD si es posible
+            $fecha = null;
+            if ($foundDate !== null) {
+                try {
+                    $fecha = Carbon::parse($foundDate)->toDateString(); // YYYY-MM-DD
+                } catch (\Exception $e) {
+                    $fecha = null;
+                }
+            }
+
             return [
                 'code' => $r['codigo'] ?? $r['id'] ?? null,
                 'producto' => $r['producto'] ?? $r['descripcion'] ?? null,
@@ -860,6 +897,8 @@ class SalidaController extends Controller
                 'solicitado_por' => $r['solicitado_por'] ?? $r['solicitante'] ?? $r['requested_by'] ?? null,
                 'categoria' => $r['categoria'] ?? $r['categoria_id'] ?? $r['category'] ?? null,
                 'id' => $r['id'] ?? null,
+                // nueva propiedad fecha
+                'fecha' => $fecha,
                 'raw' => $r,
             ];
         });
