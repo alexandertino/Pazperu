@@ -1252,12 +1252,6 @@ async function actaPdf2_downloadPdfFile() {
                   <input type="date" v-model="inventoryFilter.fecha_hasta"
                     class="w-full p-2 border rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100" />
                 </div>
-                <div class="flex items-end">
-                  <button @click="filtrarPorFechas"
-                    class="px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition">
-                    Filtrar
-                  </button>
-                </div>
               </div>
             </div>
 

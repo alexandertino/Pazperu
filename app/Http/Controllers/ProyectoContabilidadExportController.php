@@ -646,6 +646,5 @@ class ProyectoContabilidadExportController extends Controller
 
         return response()->download($rutaTmp)->deleteFileAfterSend(true);
 
-        // ---------- FIN PARTE 2 ----------
     }
 }
