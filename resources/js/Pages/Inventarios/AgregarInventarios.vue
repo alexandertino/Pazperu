@@ -216,7 +216,42 @@ onMounted(async () => {
     }
 
     // seleccionar primer elemento por defecto si no hay valor en el form
-    const firstNonEmpty = (arr) => (Array.isArray(arr) && arr.length ? arr.find(x => String(x.nombre || '').trim() !== '') : null);
+    // -------------------------------------------------------
+// 💡 Procesar parámetros tipo EASY (desde query string)
+// Ejemplo: ?descripcion=1-Aprovisionamiento%20a%20caja%20desde%20B-&precio=0&cantidad=1&origen=EASY
+// -------------------------------------------------------
+    try {
+        const params = new URLSearchParams(window.location.search);
+        const easyDesc = params.get('descripcion');
+        const easyPrecio = params.get('precio');
+        const easyCantidad = params.get('cantidad');
+        const easyOrigen = params.get('origen');
+        const easyUnidad = params.get('unidad_medida');
+        const easyCategoria = params.get('categoria');
+        const easyId = params.get('easy_id');
+
+        if (easyDesc) {
+            const raw = decodeURIComponent(easyDesc).trim();
+
+            // Separar número y texto: "1-Aprovisionamiento..." → numero=1, descripcion=Aprovisionamiento...
+            const match = raw.match(/^(\d+)\s*-\s*(.+)$/);
+            if (match) {
+                form.numero = match[1];
+                form.descripcion = match[2];
+            } else {
+                form.descripcion = raw;
+            }
+        }
+
+        if (easyPrecio) form.precio = easyPrecio;
+        if (easyCantidad) form.entradas = easyCantidad;
+        if (easyOrigen) form.am_table = easyOrigen;
+        if (easyUnidad) form.unidad_medida = decodeURIComponent(easyUnidad);
+        if (easyCategoria) form.categoria = decodeURIComponent(easyCategoria);
+        if (easyId) form.am_row_id = easyId;
+    } catch (err) {
+        console.warn('No se pudieron leer parámetros EASY:', err);
+    }
 
 });
 

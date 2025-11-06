@@ -105,8 +105,8 @@ const addItem = async () => {
         nombre: newProyecto.value.nombre,
         estado: newProyecto.value.estado,
         descripcion: newProyecto.value.descripcion,
-        fecha_inicio: newProyecto.value.fecha_inicio,
-        fecha_fin: newProyecto.value.fecha_fin
+        fecha_inicio: newProyecto.value.fecha_inicio || null,
+        fecha_fin: newProyecto.value.fecha_fin && String(newProyecto.value.fecha_fin).trim() !== '' ? newProyecto.value.fecha_fin : null
       };
     } else {
       payload = { ...payload, nombre: newItem.value.nombre };
@@ -152,8 +152,10 @@ const addItem = async () => {
 
     Swal.fire('OK', 'Creado', 'success');
   } catch (err) {
-    console.error(err);
-    Swal.fire('Error', 'No se pudo crear', 'error');
+    console.error('Error al crear item:', err);
+    // intentar mostrar errores del backend si los hay
+    const serverMsg = err?.response?.data?.message || err?.message || 'No se pudo crear';
+    Swal.fire('Error', serverMsg, 'error');
   }
 };
 
@@ -161,10 +163,10 @@ const startEdit = (type, item) => {
   if (type === 'personas') {
     editing.value = { type, id: item.id, nombre: item.nombre ?? '', lugar: item.lugar ?? '', distrito: item.distrito ?? '' };
   } else if (type === 'proyectos') {
+    // NO incluimos `nombre` para dejarlo inmutable desde aquí
     editing.value = {
       type,
       id: item.id,
-      nombre: item.nombre ?? '',
       estado: item.estado ?? '',
       descripcion: item.descripcion ?? '',
       fecha_inicio: item.fecha_inicio ?? '',
@@ -197,21 +199,26 @@ const saveEdit = async () => {
         personas.value[idx].distrito = editing.value.distrito;
       }
     } else if (type === 'proyectos') {
-      await axios.put(`${endpointBase}/${type}/${editing.value.id}`, {
-        nombre: editing.value.nombre,
+      // No enviamos ni actualizamos el nombre aquí (queda inmutable)
+      // construimos payload limpiando campos vacíos
+      const payload = {
         estado: editing.value.estado,
-        descripcion: editing.value.descripcion,
-        fecha_inicio: editing.value.fecha_inicio,
-        fecha_fin: editing.value.fecha_fin
-      });
+        descripcion: editing.value.descripcion || null,
+        fecha_inicio: editing.value.fecha_inicio && String(editing.value.fecha_inicio).trim() !== '' ? editing.value.fecha_inicio : null
+      };
+
+      if (editing.value.fecha_fin && String(editing.value.fecha_fin).trim() !== '') {
+        payload.fecha_fin = editing.value.fecha_fin;
+      }
+
+      await axios.put(`${endpointBase}/${type}/${editing.value.id}`, payload);
 
       const idx = proyectos.value.findIndex(x => x.id === editing.value.id);
       if (idx !== -1) {
-        proyectos.value[idx].nombre = editing.value.nombre;
         proyectos.value[idx].estado = editing.value.estado;
         proyectos.value[idx].descripcion = editing.value.descripcion;
-        proyectos.value[idx].fecha_inicio = editing.value.fecha_inicio;
-        proyectos.value[idx].fecha_fin = editing.value.fecha_fin;
+        proyectos.value[idx].fecha_inicio = payload.fecha_inicio ?? '';
+        proyectos.value[idx].fecha_fin = payload.fecha_fin ?? '';
       }
     } else if (type === 'usuarios') {
       // Solo actualizar role
@@ -239,8 +246,38 @@ const saveEdit = async () => {
     editing.value = {};
     Swal.fire('OK', 'Actualizado', 'success');
   } catch (err) {
-    console.error(err);
-    Swal.fire('Error', 'No se pudo actualizar', 'error');
+    console.error('Error en saveEdit:', err);
+
+    // Si es 422 (validación Laravel), intentamos mostrar los errores legibles
+    if (err.response && err.response.status === 422) {
+      const resp = err.response.data;
+      const errors = resp.errors || resp;
+      let text = '';
+      if (errors && typeof errors === 'object') {
+        const lines = [];
+        for (const key in errors) {
+          if (Array.isArray(errors[key])) {
+            lines.push(`${key}: ${errors[key].join(' - ')}`);
+          } else {
+            lines.push(`${key}: ${errors[key]}`);
+          }
+        }
+        text = lines.join('\n');
+      } else {
+        text = String(errors);
+      }
+
+      Swal.fire({
+        icon: 'error',
+        title: 'Error de validación (422)',
+        html: `<pre style="text-align:left;white-space:pre-wrap;">${text}</pre>`,
+        customClass: { popup: 'max-w-2xl' }
+      });
+      return;
+    }
+
+    const serverMsg = err?.response?.data?.message || err.message || 'No se pudo actualizar';
+    Swal.fire('Error', serverMsg, 'error');
   }
 };
 
@@ -273,7 +310,7 @@ const removeItem = async (type, item) => {
 
     Swal.fire('OK', 'Eliminado', 'success');
   } catch (err) {
-    console.error(err);
+    console.error('Error al eliminar:', err);
     Swal.fire('Error', 'No se pudo eliminar', 'error');
   }
 };
@@ -295,9 +332,6 @@ const filteredList = (tab) => {
   );
 };
 
-
-
-
 // Función para refrescar solo usuarios desde el servidor (útil después de cambios)
 const refreshUsuarios = async () => {
   try {
@@ -309,7 +343,7 @@ const refreshUsuarios = async () => {
       Swal.fire('Info', 'No se encontraron usuarios en la respuesta del servidor', 'info');
     }
   } catch (err) {
-    console.error(err);
+    console.error('Error al refrescar usuarios:', err);
     Swal.fire('Error', 'No se pudo actualizar usuarios', 'error');
   }
 };
@@ -344,7 +378,6 @@ const verificarDatos = async () => {
 // agrega esto arriba en tu <script setup>
 const inserting = ref(false);
 
-//daaaa
 const insertarDatosIniciales = async () => {
   if (inserting.value) return; // evita reentradas
   inserting.value = true;
@@ -409,7 +442,6 @@ const insertarDatosIniciales = async () => {
       }
     }
 
-    // Toast success (si el backend trae un mensaje lo mostramos)
     const successMsg = res.data?.message || (payload ? '✅ Datos iniciales cargados correctamente' : '✅ Insertado');
     Swal.fire({
       toast: true,
@@ -419,13 +451,9 @@ const insertarDatosIniciales = async () => {
       showConfirmButton: false,
       timer: 2500
     });
-
-    // opcional: refrescar datos desde servidor
-    // await verificarDatos();
   } catch (error) {
     console.error('Error al insertar datos iniciales:', error);
 
-    // Intentamos extraer mensaje útil
     const serverMsg = error?.response?.data?.message || error?.response?.data || error.message || 'Error al insertar datos iniciales';
     Swal.fire({
       toast: true,
@@ -439,7 +467,6 @@ const insertarDatosIniciales = async () => {
     inserting.value = false;
   }
 };
-
 </script>
 
 <template>
@@ -654,7 +681,8 @@ const insertarDatosIniciales = async () => {
                 <!-- Otro tipo row -->
                 <template v-else>
                   <td class="px-4 py-3 text-sm">
-                    <div v-if="editing.id === item.id && editing.type === activeTab">
+                    <!-- Solo mostramos input para nombre si NO es proyectos -->
+                    <div v-if="editing.id === item.id && editing.type === activeTab && activeTab !== 'proyectos'">
                       <input v-model="editing.nombre" class="p-2 border rounded-lg w-full dark:bg-gray-900 dark:border-gray-700 dark:text-gray-100" />
                     </div>
                     <div v-else class="truncate">{{ item.nombre }}</div>
@@ -677,11 +705,11 @@ const insertarDatosIniciales = async () => {
                   <td v-if="activeTab === 'proyectos'" class="px-4 py-3 text-sm w-28">
                     <div v-if="editing.id === item.id && editing.type === activeTab">
                       <select v-model="editing.estado" class="p-2 border rounded-lg w-full dark:bg-gray-900 dark:border-gray-700 dark:text-gray-100">
-                        <option value="pendiente">Pendiente</option>
-                        <option value="activo">Activo</option>
-                        <option value="completado">Completado</option>
-                        <option value="cancelado">Cancelado</option>
+                        <option>En Proceso</option>
+                        <option>Pausado</option>
+                        <option>Terminado</option>
                       </select>
+
                     </div>
                     <div v-else class="truncate">{{ item.estado }}</div>
                   </td>

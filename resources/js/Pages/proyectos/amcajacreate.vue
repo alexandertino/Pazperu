@@ -190,8 +190,8 @@ function validateForm() {
     errors.value.n_acta = res.error || 'N° Acta inválido.'
   }
 
-  if (form.value.descripcion && form.value.descripcion.length > 50) {
-    errors.value.descripcion = 'Descripción debe tener máximo 50 caracteres.'
+  if (form.value.descripcion && form.value.descripcion.length > 47) {
+    errors.value.descripcion = 'Descripción debe tener máximo 47 caracteres.'
   }
 
 
@@ -537,9 +537,9 @@ const submitButtonLabel = computed(() => {
 
             <div class="md:col-span-2">
               <label class=" dark:text-white block text-sm font-medium">
-                Descripción <span class="text-xs  text-gray-500">({{ form.descripcion.length }}/50)</span>
+                Descripción <span class="text-xs  text-gray-500">({{ form.descripcion.length }}/47)</span>
               </label>
-              <textarea v-model="form.descripcion" maxlength="50"
+              <textarea v-model="form.descripcion" maxlength="47"
                 class="mt-1 w-full p-2 border rounded dark:text-white dark:bg-gray-700 " rows="3"></textarea>
               <p v-if="errors.descripcion" class="text-red-500 text-sm mt-1">{{ errors.descripcion }}</p>
             </div>

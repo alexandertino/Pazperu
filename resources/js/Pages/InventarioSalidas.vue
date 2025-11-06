@@ -62,12 +62,9 @@ const tablaVisibleLabel = computed(() => {
 // Helpers (robustos para formatos:
 // "YYYY-MM-DD", "YYYY-MM-DD HH:MM:SS", "YYYY-MM-DDTHH:MM:SSZ", etc.)
 function getDateParts(fecha) {
-    if (!fecha) return { mes: null, anio: null };
-    const s = String(fecha).slice(0, 10);        // toma "YYYY-MM-DD"
-    const parts = s.split('-');
-    const anio = parseInt(parts[0], 10) || null;
-    const mes = parseInt(parts[1], 10) || null; // 1..12
-    return { mes, anio };
+  const d = parseFecha(fecha);
+  if (!d) return { mes: null, anio: null };
+  return { mes: d.getMonth() + 1, anio: d.getFullYear() };
 }
 
 // Filtros (reemplaza/añade donde tengas tus computed)
@@ -906,115 +903,116 @@ function abrirCrear(proyectoId) {
 
 /* ---------- parseNumero (robusto) ---------- */
 const parseNumero = (val) => {
-    if (val === null || val === undefined || val === '') return 0;
-    if (typeof val === 'number') return val;
-    let cleaned = String(val).trim();
-    cleaned = cleaned.replace(/\s/g, '');
-    if (cleaned.indexOf('.') !== -1 && cleaned.indexOf(',') !== -1) {
-        if (cleaned.lastIndexOf(',') > cleaned.lastIndexOf('.')) {
-            cleaned = cleaned.replace(/\./g, '').replace(/,/g, '.');
-        } else {
-            cleaned = cleaned.replace(/,/g, '');
-        }
-    } else if (cleaned.indexOf(',') !== -1 && cleaned.indexOf('.') === -1) {
-        cleaned = cleaned.replace(/,/g, '.');
-    }
-    const n = parseFloat(cleaned);
-    return isNaN(n) ? 0 : n;
+  if (val === null || val === undefined || val === '') return 0;
+  if (typeof val === 'number') return val;
+  let s = String(val).trim();
+  // quitar símbolos no numéricos salvo , . y -
+  s = s.replace(/[^\d\-,\.]/g, '');
+  // casos: "1.234,56" (usualmente ES) -> "1234.56"
+  if (s.indexOf('.') !== -1 && s.indexOf(',') !== -1 && s.lastIndexOf(',') > s.lastIndexOf('.')) {
+    s = s.replace(/\./g, '').replace(',', '.');
+  } else if (s.indexOf(',') !== -1 && s.indexOf('.') === -1) {
+    s = s.replace(',', '.');
+  } else {
+    s = s.replace(/,/g, '');
+  }
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
 };
 
 
 /* ---------- parseFecha (normaliza siempre a medianoche LOCAL) ---------- */
 const parseFecha = (fechaStr) => {
-    if (!fechaStr) return null;
-    try {
-        const s = String(fechaStr).trim();
+  if (!fechaStr && fechaStr !== 0) return null;
+  try {
+    const s = String(fechaStr).trim();
 
-        // dd/mm/yyyy
-        if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(s)) {
-            const parts = s.split('/');
-            const day = Number(parts[0]);
-            const month = Number(parts[1]) - 1;
-            const year = Number(parts[2]);
-            if (!isNaN(day) && !isNaN(month) && !isNaN(year)) {
-                const d = new Date(year, month, day);
-                d.setHours(0, 0, 0, 0);
-                return d;
-            }
-        }
-
-        // yyyy-mm-dd (sin hora) -> forzar local
-        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
-            const parts = s.split('-');
-            const year = Number(parts[0]);
-            const month = Number(parts[1]) - 1;
-            const day = Number(parts[2]);
-            if (!isNaN(year) && !isNaN(month) && !isNaN(day)) {
-                const d = new Date(year, month, day);
-                d.setHours(0, 0, 0, 0);
-                return d;
-            }
-        }
-
-        // Otros: ISO con hora o valores parseables por Date
-        const d0 = new Date(s);
-        if (!isNaN(d0.getTime())) {
-            // extraer Y/M/D en zona local y construir fecha local (evita shift UTC)
-            const y = d0.getFullYear();
-            const m = d0.getMonth();
-            const day = d0.getDate();
-            const d = new Date(y, m, day);
-            d.setHours(0, 0, 0, 0);
-            return d;
-        }
-    } catch (e) {
-        // ignore and return null
+    // dd/mm/yyyy
+    if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(s)) {
+      const [d, m, y] = s.split('/').map(Number);
+      const dt = new Date(y, m - 1, d);
+      dt.setHours(0, 0, 0, 0);
+      return dt;
     }
-    return null;
+
+    // yyyy-mm-dd
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+      const [y, m, d] = s.split('-').map(Number);
+      const dt = new Date(y, m - 1, d);
+      dt.setHours(0, 0, 0, 0);
+      return dt;
+    }
+
+    // timestamp (segundos o ms) o ISO completo
+    if (/^\d+$/.test(s)) {
+      const n = Number(s);
+      // segundos
+      if (n < 10000000000) return new Date(n * 1000);
+      return new Date(n);
+    }
+
+    const d0 = new Date(s);
+    if (!isNaN(d0.getTime())) {
+      // normalizar a medianoche local (evita offsets)
+      const y = d0.getFullYear(), m = d0.getMonth(), day = d0.getDate();
+      const d = new Date(y, m, day);
+      d.setHours(0,0,0,0);
+      return d;
+    }
+  } catch (e) {
+    // ignore
+  }
+  return null;
 };
 
 
 /* ---------- util: mes/anio anterior ---------- */
-const getPrevMesAnio = (m, y) => {
-    const mes = Number(m);
-    const anio = Number(y);
-    if (isNaN(mes) || isNaN(anio)) return { mes, anio };
-    if (mes === 1) return { mes: 12, anio: anio - 1 };
-    return { mes: mes - 1, anio: anio };
-};
+function getPrevMesAnio(mes, anio) {
+  mes = Number(mes);
+  anio = Number(anio);
+  if (mes === 1) return { mes: 12, anio: anio - 1 };
+  return { mes: mes - 1, anio };
+}
 
 /* ---------- util: chequear fecha contra mes/anio dado ---------- */
-    const esDelMesCon = (fechaRaw, mes, anio) => {
-    const f = parseFecha(fechaRaw);
-    if (!f) return false;
-    return f.getMonth() + 1 === mes && f.getFullYear() === anio;
+const esDelMesCon = (fechaRaw, mes, anio) => {
+  const f = parseFecha(fechaRaw);
+  if (!f) return false;
+  return (f.getMonth() + 1) === Number(mes) && f.getFullYear() === Number(anio);
 };
 
 
 /* ---------- util: último saldo del mes (intenta campo 'saldo', si no fallback a ingresos-egresos) ---------- */
 const ultimoSaldoDelMes = (items = [], fechaCampo = 'fecha') => {
-    if (!Array.isArray(items) || items.length === 0) return 0;
+  if (!Array.isArray(items) || items.length === 0) return 0;
 
-    const conFecha = items
-        .map(i => {
-            const fecha = parseFecha(i[fechaCampo] ?? i.created_at ?? i.fecha);
-            return { raw: i, fechaObj: fecha };
-        })
-        .filter(x => x.fechaObj instanceof Date && !isNaN(x.fechaObj))
-        .sort((a, b) => a.fechaObj - b.fechaObj);
+  const lista = items
+    .map(i => ({ raw: i, fechaObj: parseFecha(i[fechaCampo] ?? i.fecha ?? i.created_at) }))
+    .filter(x => x.fechaObj instanceof Date && !isNaN(x.fechaObj.getTime()))
+    .sort((a, b) => a.fechaObj - b.fechaObj);
 
-    if (conFecha.length > 0) {
-        const ultimo = conFecha[conFecha.length - 1].raw;
-        const saldo = parseNumero(ultimo.saldo);
-        if (!isNaN(saldo)) return saldo;
-    }
+  if (!lista.length) return 0;
 
-    // fallback si no hay saldo válido
-    const ingresos = items.reduce((s, r) => s + parseNumero(r.ingresos), 0);
-    const egresos = items.reduce((s, r) => s + parseNumero(r.egresos), 0);
-    return ingresos - egresos;
+  // 1) si último registro tiene .saldo válido, devolverlo
+  const posibleUltimo = lista[lista.length - 1].raw;
+  const sRaw = parseNumero(posibleUltimo.saldo ?? posibleUltimo.Saldo ?? posibleUltimo.saldo_final);
+  if (!isNaN(sRaw) && sRaw !== 0) return sRaw;
+
+  // 2) recalcular por ingresos/egresos
+  let running = 0;
+  let any = false;
+  for (const entry of lista) {
+    const r = entry.raw;
+    const ing = parseNumero(r.ingresos ?? r.ingreso ?? r.monto_ingreso ?? 0);
+    const eg = parseNumero(r.egresos ?? r.egreso ?? r.monto_egreso ?? 0);
+    if (ing !== 0 || eg !== 0) any = true;
+    running = running + ing - eg;
+  }
+  if (any) return running;
+
+  // fallback
+  return 0;
 };
-
 
 
 /* ==========================
@@ -1194,7 +1192,7 @@ function eliminarActa(id) {
     // ajusta el nombre de la ruta si es distinto
     router.delete(route('proyectos.easy.destroy', { proyecto: props.proyecto.id, id }));
 }
-
+//hahahahaha
 // Estado visible en template
 const modalVinculacionVisible = ref(false)
 const currentActa = ref(null)
@@ -1526,6 +1524,50 @@ const saldoFinal = computed(() => {
 const saldoFinalBanco = computed(() => {
     return ultimoSaldoBanco.value;
 });
+
+const enviarAInventario = () => {
+  if (!itemsEasyFiltrados.value?.length) {
+    Swal.fire({
+      icon: 'info',
+      title: 'No hay datos',
+      text: 'No hay registros para enviar al Inventario.',
+    });
+    return;
+  }
+
+  // aquí puedes elegir qué registro enviar
+  // en este ejemplo envío el PRIMERO
+  const item = itemsEasyFiltrados.value[0]; // o el que selecciones manualmente
+
+  // ejemplo: prepara los datos que necesita Inventario
+  const params = new URLSearchParams({
+    descripcion: item.numero_descripcion_pieza || '',
+    categoria: item.categoria || '',
+    unidad_medida: item.unidad_medida || '',
+    cantidad: item.cantidad || 1,
+    precio: item.precio_unitario || 0,
+    easy_id: item.id,
+    proyecto_id: props.proyecto.id,
+    origen: 'EASY'
+  });
+
+  const url = `/proyectos/${props.proyecto.id}/inventarios/create?${params.toString()}`;
+
+  Swal.fire({
+    title: '¿Enviar a Inventario?',
+    text: `Se enviará el registro EASY "${item.numero_descripcion_pieza}" al Inventario.`,
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonText: 'Sí, enviar',
+    cancelButtonText: 'Cancelar',
+  }).then((r) => {
+    if (r.isConfirmed) {
+      window.location.href = url;
+    }
+  });
+};
+
+
 
 </script>
 
@@ -2758,6 +2800,7 @@ const saldoFinalBanco = computed(() => {
                                         class="sticky top-0 z-10 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-100">
                                         <tr>
                                             <!-- Columnas tipo Excel (ordenadas para lectura contable) -->
+                                             <th></th>
                                             <th class="p-2">Codigo general</th>
                                             <th class="p-2">Gasto (PEN)</th>
                                             <th class="p-2">Receta (PEN)</th>
@@ -2779,6 +2822,14 @@ const saldoFinalBanco = computed(() => {
                                         <!-- FILAS DE ITEMS -->
                                         <tr v-for="(item, idx) in itemsEasyFiltrados" :key="item.id"
                                             class="border-t dark:text-white dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700 transition">
+                                            <td class="p-3 text-center">
+                                                <div
+                                                    @click="verVinculacion(item, 'easy')"
+                                                    :title="isVinculado(item, 'easy') ? 'Ver vinculación' : 'Sin vinculación'"
+                                                    class="w-4 h-4 rounded-full cursor-pointer mx-auto"
+                                                    :class="isVinculado(item, 'easy') ? 'bg-green-500 hover:bg-green-600' : ''"
+                                                ></div>
+                                            </td>
                                             <td class="p-2">{{ item.Cuenta_general }}</td>
                                             <td class="p-2">{{ item.gasto_moneda_local }}</td>
                                             <td class="p-2">{{ item.ingreso_moneda_local }}</td>
@@ -2799,6 +2850,11 @@ const saldoFinalBanco = computed(() => {
 
                                                 <button @click="eliminarActa(item.id)"
                                                     class="flex items-center justify-center w-9 h-9 bg-red-500 text-white rounded-lg">🗑️</button>
+                                                <button
+                                                    @click="enviarAInventario"
+                                                    class="flex items-center justify-center w-9 h-9 bg-indigo-600 text-white rounded-lg">
+                                                    ➡️
+                                                </button>
                                             </td>
                                         </tr>
 

@@ -501,6 +501,12 @@ watch(() => form.ingreso_moneda_local, (nv) => {
   }
 });
 
+// Contador de caracteres
+const numeroDescripcionLength = computed(() =>
+  String(form.numero_descripcion_pieza || '').length
+);
+
+
 </script>
 
 <template>
@@ -656,14 +662,21 @@ watch(() => form.ingreso_moneda_local, (nv) => {
               Número / descripción de la pieza
             </label>
 
-            <div class="flex gap-3 items-center">
-              <input ref="numeroInputRef" v-model="form.numero_descripcion_pieza" @blur="handleNumeroBlur" type="text"
-                aria-label="Número o descripción de la pieza" placeholder="Ej: 397-Pract_inst..."
+            <div class="flex flex-col w-full">
+              <input
+                ref="numeroInputRef"
+                v-model="form.numero_descripcion_pieza"
+                @blur="handleNumeroBlur"
+                @input="onNumeroInput"
+                maxlength="50"
+                type="text"
+                aria-label="Número o descripción de la pieza"
+                placeholder="Ej: 397-Pract_inst..."
                 class="flex-1 mt-1 p-2 border rounded dark:bg-gray-800 dark:border-gray-700 dark:text-gray-200" />
 
-              <div v-if="lastNumeroFull"
-                class="text-xs px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded text-gray-700 dark:text-gray-200">
-                Último: <strong class="ml-1">{{ lastNumeroFull }}</strong>
+              <!-- Contador de caracteres -->
+              <div class="text-sm text-gray-500 dark:text-gray-400 mt-1 text-right select-none">
+                {{ numeroDescripcionLength }} / 50
               </div>
             </div>
 

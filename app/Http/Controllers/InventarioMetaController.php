@@ -179,81 +179,100 @@ class InventarioMetaController extends Controller
     }
 
     public function update(Request $request, $type, $id)
-    {
-        $table = $this->tableForType($type);
-        if (!$table) return response()->json(['message' => 'Tipo inválido'], 422);
+{
+    $table = $this->tableForType($type);
+    if (!$table) return response()->json(['message' => 'Tipo inválido'], 422);
 
-        $exists = DB::table($table)->where('id', $id)->exists();
-        if (!$exists) return response()->json(['message' => 'No encontrado'], 404);
+    $exists = DB::table($table)->where('id', $id)->exists();
+    if (!$exists) return response()->json(['message' => 'No encontrado'], 404);
 
-        if ($table === 'personas') {
-            $request->validate([
-                'nombre' => ['required', 'string', 'max:255'],
-                'lugar' => ['nullable', 'string', 'max:255'],
-                'distrito' => ['nullable', 'string', 'max:255'],
-            ]);
-
-            DB::table('personas')->where('id', $id)->update([
-                'nombre' => $request->input('nombre'),
-                'lugar' => $request->input('lugar'),
-                'distrito' => $request->input('distrito'),
-                'updated_at' => now(),
-            ]);
-
-            $row = DB::table('personas')->where('id', $id)->first();
-            return response()->json(['id' => $id, 'persona' => $row]);
-        }
-
-        if ($table === 'proyectos') {
-            $request->validate([
-                'nombre' => ['required', 'string', 'max:255'],
-                'estado' => ['nullable', 'string', 'max:50'],
-                'descripcion' => ['nullable', 'string'],
-                'fecha_inicio' => ['nullable', 'date'],
-                'fecha_fin' => ['nullable', 'date'],
-            ]);
-
-            DB::table('proyectos')->where('id', $id)->update([
-                'nombre' => $request->input('nombre'),
-                'estado' => $request->input('estado') ?? null,
-                'descripcion' => $request->input('descripcion') ?? null,
-                'fecha_inicio' => $request->input('fecha_inicio') ?? null,
-                'fecha_fin' => $request->input('fecha_fin') ?? null,
-                'updated_at' => now(),
-            ]);
-
-            $row = DB::table('proyectos')->where('id', $id)->first();
-            return response()->json(['id' => $id, 'proyecto' => $row]);
-        }
-
-        if ($table === 'users') {
-            // solo permitimos actualizar el role desde este endpoint
-            $request->validate([
-                'role' => ['nullable', 'string', 'max:100'],
-            ]);
-
-            DB::table('users')->where('id', $id)->update([
-                'role' => $request->input('role'),
-                'updated_at' => now(),
-            ]);
-
-            $row = DB::table('users')->select('id', 'name', 'email', 'role')->where('id', $id)->first();
-            return response()->json(['id' => $id, 'usuario' => $row]);
-        }
-
-        // default para otras tablas (nombre)
+    if ($table === 'personas') {
         $request->validate([
             'nombre' => ['required', 'string', 'max:255'],
+            'lugar' => ['nullable', 'string', 'max:255'],
+            'distrito' => ['nullable', 'string', 'max:255'],
         ]);
 
-        DB::table($table)->where('id', $id)->update([
+        DB::table('personas')->where('id', $id)->update([
             'nombre' => $request->input('nombre'),
+            'lugar' => $request->input('lugar'),
+            'distrito' => $request->input('distrito'),
             'updated_at' => now(),
         ]);
 
-        $row = DB::table($table)->where('id', $id)->first();
-        return response()->json(['id' => $id, 'item' => $row]);
+        $row = DB::table('personas')->where('id', $id)->first();
+        return response()->json(['id' => $id, 'persona' => $row]);
     }
+
+    if ($table === 'proyectos') {
+        // Validación: nombre ya NO es required (acceptamos que no venga al editar)
+        $request->validate([
+            'nombre' => ['sometimes', 'required', 'string', 'max:255'],
+            'estado' => ['nullable', 'string', 'max:50'],
+            'descripcion' => ['nullable', 'string'],
+            'fecha_inicio' => ['nullable', 'date'],
+            'fecha_fin' => ['nullable', 'date'],
+        ]);
+
+        // Construimos el array de update dinámicamente para no sobrescribir campos no enviados
+        $update = ['updated_at' => now()];
+
+        if ($request->has('nombre')) {
+            // Si llega nombre (aunque vacío), lo usamos; la validación earlier lo permite o rechazará.
+            $update['nombre'] = $request->input('nombre');
+        }
+
+        if ($request->has('estado')) {
+            $update['estado'] = $request->input('estado') ?: null;
+        }
+
+        if ($request->has('descripcion')) {
+            $update['descripcion'] = $request->input('descripcion') ?: null;
+        }
+
+        if ($request->has('fecha_inicio')) {
+            $update['fecha_inicio'] = $request->input('fecha_inicio') ?: null;
+        }
+
+        if ($request->has('fecha_fin')) {
+            $update['fecha_fin'] = $request->input('fecha_fin') ?: null;
+        }
+
+        DB::table('proyectos')->where('id', $id)->update($update);
+
+        $row = DB::table('proyectos')->where('id', $id)->first();
+        return response()->json(['id' => $id, 'proyecto' => $row]);
+    }
+
+    if ($table === 'users') {
+        // solo permitimos actualizar el role desde este endpoint
+        $request->validate([
+            'role' => ['nullable', 'string', 'max:100'],
+        ]);
+
+        DB::table('users')->where('id', $id)->update([
+            'role' => $request->input('role'),
+            'updated_at' => now(),
+        ]);
+
+        $row = DB::table('users')->select('id', 'name', 'email', 'role')->where('id', $id)->first();
+        return response()->json(['id' => $id, 'usuario' => $row]);
+    }
+
+    // default para otras tablas (nombre)
+    $request->validate([
+        'nombre' => ['required', 'string', 'max:255'],
+    ]);
+
+    DB::table($table)->where('id', $id)->update([
+        'nombre' => $request->input('nombre'),
+        'updated_at' => now(),
+    ]);
+
+    $row = DB::table($table)->where('id', $id)->first();
+    return response()->json(['id' => $id, 'item' => $row]);
+    }
+
 
     public function destroy($type, $id)
     {

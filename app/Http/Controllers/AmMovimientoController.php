@@ -595,11 +595,19 @@ class AmMovimientoController extends Controller
         return redirect()->back()->with('error', 'Registro de banco no encontrado.');
     }
 
+    // Validación
     $data = $request->validate([
         'descripcion'    => 'nullable|string|max:255',
         'presupuestario' => 'nullable|string|max:255',
         'actividad'      => 'nullable|string|max:255',
+        'fecha'          => 'required|date',
+        'ingresos'       => 'nullable|numeric|min:0',
+        'egresos'        => 'nullable|numeric|min:0',
     ]);
+
+    // Normalizar valores numéricos (evitar nulls)
+    $data['ingresos'] = isset($data['ingresos']) ? number_format((float)$data['ingresos'], 2, '.', '') : '0.00';
+    $data['egresos']  = isset($data['egresos'])  ? number_format((float)$data['egresos'], 2, '.', '') : '0.00';
 
     // Filtramos solo columnas existentes por seguridad
     $columns = Schema::getColumnListing($tabla);
@@ -611,8 +619,10 @@ class AmMovimientoController extends Controller
 
         DB::table($tabla)->where('id', $id)->update($allowed);
 
-        // Recalcular saldos desde este id
-        $this->recalcularSaldosDesdeTabla($tabla, $id);
+        // Recalcular saldos desde este id (si tu función espera la tabla y el id)
+        if (method_exists($this, 'recalcularSaldosDesdeTabla')) {
+            $this->recalcularSaldosDesdeTabla($tabla, $id);
+        }
 
         DB::commit();
 
@@ -620,10 +630,11 @@ class AmMovimientoController extends Controller
             ->with('success', 'Banco actualizado correctamente.');
     } catch (\Throwable $e) {
         DB::rollBack();
-        Log::error('Error updateBanco: ' . $e->getMessage());
-        return redirect()->back()->with('error', 'Error al actualizar el banco.');
+        Log::error('Error updateBanco: ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
+        return redirect()->back()->with('error', 'Error al actualizar el banco: ' . $e->getMessage());
     }
     }
+
 
     public function destroyBanco(Proyecto $proyecto, $id){
         $base = (string) Str::of($proyecto->nombre)->lower()->replace(' ', '_');

@@ -341,6 +341,13 @@ class InventarioController extends Controller
 
         return response()->download($rutaArchivo);
     }
+    public function recibir(Proyecto $proyecto, Request $request)
+    {
+        return inertia('Inventarios/create', [
+            'proyecto' => $proyecto,
+            'datos_precargados' => $request->all(),
+        ]);
+    }
 
     // Importar inventario desde Excel
     public function importarInventario(Request $request, $proyecto)

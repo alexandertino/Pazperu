@@ -181,6 +181,8 @@ Route::middleware('auth')->group(function () {
     Route::put('proyectos/{proyecto}/easy/{id}', [ProyectoEasyController::class, 'updateEasy'])
         ->name('proyectos.easy.update');
 
+        Route::get('/proyectos/{proyecto}/inventario/recibir', [InventarioController::class, 'recibir']);
+
     Route::delete('proyectos/{proyecto}/easy/{id}', [ProyectoEasyController::class, 'destroyEasy'])
         ->name('proyectos.easy.destroy');
 

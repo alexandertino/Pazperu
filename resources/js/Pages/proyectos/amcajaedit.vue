@@ -8,7 +8,9 @@
       <form @submit.prevent="confirmSubmit" class="grid grid-cols-1 gap-4">
         <div>
           <label class="block text-sm font-medium dark:text-white">N° Acta</label>
-          <input v-model="form.n_acta" type="text" maxlength="50" class="mt-1 w-full p-2 border rounded" />
+          <input v-model="form.n_acta" type="text" maxlength="50"
+            class="mt-1 w-full p-2 border rounded bg-gray-100 text-gray-500 cursor-not-allowed" disabled />
+
           <p v-if="form.errors.n_acta" class="text-red-500 text-sm">{{ form.errors.n_acta }}</p>
         </div>
 
@@ -30,7 +32,7 @@
           <input v-model="form.presupuestario" type="text" maxlength="100" class="mt-1 w-full p-2 border rounded" />
           <p v-if="form.errors.presupuestario" class="text-red-500 text-sm">{{ form.errors.presupuestario }}</p>
         </div>
-        
+
 
         <div>
           <label class="block text-sm font-medium dark:text-white">Actividad</label>
@@ -51,18 +53,18 @@
           </div>
         </div>
         <div>
-  <label class="block text-sm font-medium dark:text-white">Ingresos (S/.)</label>
-  <input v-model.number="form.ingresos" type="number" step="0.01" min="0"
-         class="mt-1 w-full p-2 border rounded" />
-  <p v-if="form.errors.ingresos" class="text-red-500 text-sm">{{ form.errors.ingresos }}</p>
-</div>
+          <label class="block text-sm font-medium dark:text-white">Ingresos (S/.)</label>
+          <input v-model.number="form.ingresos" type="number" step="0.01" min="0"
+            class="mt-1 w-full p-2 border rounded" />
+          <p v-if="form.errors.ingresos" class="text-red-500 text-sm">{{ form.errors.ingresos }}</p>
+        </div>
 
-<div>
-  <label class="block text-sm font-medium dark:text-white">Egresos (S/.)</label>
-  <input v-model.number="form.egresos" type="number" step="0.01" min="0"
-         class="mt-1 w-full p-2 border rounded" />
-  <p v-if="form.errors.egresos" class="text-red-500 text-sm">{{ form.errors.egresos }}</p>
-</div>
+        <div>
+          <label class="block text-sm font-medium dark:text-white">Egresos (S/.)</label>
+          <input v-model.number="form.egresos" type="number" step="0.01" min="0"
+            class="mt-1 w-full p-2 border rounded" />
+          <p v-if="form.errors.egresos" class="text-red-500 text-sm">{{ form.errors.egresos }}</p>
+        </div>
 
 
 
