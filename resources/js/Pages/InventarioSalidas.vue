@@ -1398,16 +1398,18 @@ async function eliminarBanco(id) {
     if (!conf.isConfirmed) return;
 
     try {
-        await axios.delete(`/proyectos/${proyecto.id}/ambanco/${id}`);
-        await fetchDatos();
-        fetchMeta('c');
-        fetchMeta('b');
-        Swal.fire('Eliminado', 'Registro de banco eliminado y saldos actualizados.', 'success');
+        const url = `/proyectos/${props.proyecto.id}/ambanco/${id}`;
+        await axios.delete(url);
+
+        
+        Swal.fire('Eliminado', 'Registro de banco eliminado correctamente.', 'success');
     } catch (err) {
-        console.error(err);
+        console.error('❗ Error al eliminarBanco:', err);
         Swal.fire('Error', err.response?.data?.message || 'No se pudo eliminar.', 'error');
     }
 }
+
+
 
 async function recalcularTablaFromUI(tabla) {
     const conf = await Swal.fire({
@@ -1569,7 +1571,7 @@ const enviarAInventario = () => {
 
 
 
-</script>
+</script>x|
 
 
 <template>

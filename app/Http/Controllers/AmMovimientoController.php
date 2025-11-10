@@ -539,28 +539,25 @@ class AmMovimientoController extends Controller
         $base = (string) Str::of($proyecto->nombre)->lower()->replace(' ', '_');
         $tabla = 'am_caja_proyecto_' . $base;
 
-        if (! Schema::hasTable($tabla)) {
-            return redirect()->back()->with('error', 'Tabla de caja no existe.');
+        if (!Schema::hasTable($tabla)) {
+            return response()->json(['message' => 'Tabla de caja no existe.'], 404);
         }
 
         try {
             DB::beginTransaction();
-
-            // Borrar
             DB::table($tabla)->where('id', $id)->delete();
 
-            // Encontrar el siguiente id (si existe) y recalcular desde él
             $next = DB::table($tabla)->where('id', '>', $id)->orderBy('id')->first();
             if ($next) {
                 $this->recalcularSaldosDesdeTabla($tabla, $next->id);
             }
 
             DB::commit();
-            return redirect()->back()->with('success', 'Registro de caja eliminado correctamente.');
+            return response()->json(['message' => 'Registro eliminado correctamente.']);
         } catch (\Throwable $e) {
             DB::rollBack();
             Log::error('Error destroyCaja: ' . $e->getMessage());
-            return redirect()->back()->with('error', 'Error al eliminar registro de caja.');
+            return response()->json(['message' => 'Error al eliminar registro.'], 500);
         }
     }
 
@@ -636,32 +633,34 @@ class AmMovimientoController extends Controller
     }
 
 
-    public function destroyBanco(Proyecto $proyecto, $id){
+    public function destroyBanco(Proyecto $proyecto, $id)
+    {
         $base = (string) Str::of($proyecto->nombre)->lower()->replace(' ', '_');
         $tabla = 'am_banco_proyecto_' . $base;
 
-        if (! Schema::hasTable($tabla)) {
-            return redirect()->back()->with('error', 'Tabla de caja no existe.');
+        if (!Schema::hasTable($tabla)) {
+            return response()->json(['message' => 'Tabla de banco no existe.'], 404);
         }
 
         try {
             DB::beginTransaction();
 
-            // Borrar
+            // Borrar registro
             DB::table($tabla)->where('id', $id)->delete();
 
-            // Encontrar el siguiente id (si existe) y recalcular desde él
+            // Recalcular saldos si existe siguiente registro
             $next = DB::table($tabla)->where('id', '>', $id)->orderBy('id')->first();
             if ($next) {
                 $this->recalcularSaldosDesdeTabla($tabla, $next->id);
             }
 
             DB::commit();
-            return redirect()->back()->with('success', 'Registro de Banco eliminado correctamente.');
+
+            return response()->json(['message' => 'Registro de Banco eliminado correctamente.'], 200);
         } catch (\Throwable $e) {
             DB::rollBack();
             Log::error('Error destroyBanco: ' . $e->getMessage());
-            return redirect()->back()->with('error', 'Error al eliminar registro de Banco.');
+            return response()->json(['message' => 'Error al eliminar registro de Banco.'], 500);
         }
     }
 

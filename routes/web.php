@@ -181,7 +181,7 @@ Route::middleware('auth')->group(function () {
     Route::put('proyectos/{proyecto}/easy/{id}', [ProyectoEasyController::class, 'updateEasy'])
         ->name('proyectos.easy.update');
 
-        Route::get('/proyectos/{proyecto}/inventario/recibir', [InventarioController::class, 'recibir']);
+    Route::get('/proyectos/{proyecto}/inventario/recibir', [InventarioController::class, 'recibir']);
 
     Route::delete('proyectos/{proyecto}/easy/{id}', [ProyectoEasyController::class, 'destroyEasy'])
         ->name('proyectos.easy.destroy');
@@ -220,22 +220,25 @@ Route::middleware('auth')->group(function () {
     Route::get('/proyectos/{proyecto}/am/meta', [AmMovimientoController::class, 'meta'])
         ->name('api.proyectos.am.meta');
 
+    Route::middleware('api')->group(function () {
+        Route::delete('/proyectos/{proyecto}/amcaja/{id}', [AmMovimientoController::class, 'destroyCaja']);
+    });
 
-// Eliminar registro de CAJA
-Route::delete('/proyectos/{proyecto}/amcaja/{id}', [AmMovimientoController::class, 'destroyCaja'])
-    ->name('proyectos.amcaja.destroy');
+    // Eliminar registro de CAJA
+    Route::delete('/proyectos/{proyecto}/amcaja/{id}', [AmMovimientoController::class, 'destroyCaja'])
+        ->name('proyectos.amcaja.destroy');
 
-// (si usas también banco)
-Route::delete('/proyectos/{proyecto}/ambanco/{id}', [AmMovimientoController::class, 'destroyBanco'])
-    ->name('proyectos.ambanco.destroy');
+    // (si usas también banco)
+    Route::delete('/proyectos/{proyecto}/ambanco/{id}', [AmMovimientoController::class, 'destroyBanco'])
+        ->name('proyectos.ambanco.destroy');
 
     Route::get('/proyectos/{proyecto}/ultimo-acta', [\App\Http\Controllers\SalidaController::class, 'ultimoActa']);
 
-Route::middleware(['auth'])->group(function () {
-    // Recalcular saldos (POST)
-    Route::post('/proyectos/{proyecto}/am/recalcular', [AmMovimientoController::class, 'recalcular'])
-        ->name('proyectos.am.recalcular');
-});
+    Route::middleware(['auth'])->group(function () {
+        // Recalcular saldos (POST)
+        Route::post('/proyectos/{proyecto}/am/recalcular', [AmMovimientoController::class, 'recalcular'])
+            ->name('proyectos.am.recalcular');
+    });
     // batch: devuelve vinculaciones para varios am_row_id
     Route::get('/proyectos/{proyecto}/vinculaciones/batch', [VinculacionController::class, 'batch'])
         ->name('proyectos.vinculaciones.batch');
@@ -255,7 +258,7 @@ Route::middleware(['auth'])->group(function () {
         Route::put('/inventario/meta/{type}/{id}', [InventarioMetaController::class, 'update']);
         Route::delete('/inventario/meta/{type}/{id}', [InventarioMetaController::class, 'destroy']);
     });
-    
+
     Route::get('/salidas/ultimo-codigo', [SalidaController::class, 'ultimoCodigo']);
 
     // API (recomendado)
