@@ -1,5 +1,5 @@
 <script setup>
-import { reactive } from 'vue'
+import { reactive, ref } from 'vue'
 import { Head, router } from '@inertiajs/vue3'
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue'
 import Swal from 'sweetalert2'
@@ -12,6 +12,9 @@ const form = reactive({
     fecha_fin: ''
 })
 
+// Estado de envío para evitar duplicaciones
+const isSubmitting = ref(false)
+
 function resetForm() {
     form.nombre = ''
     form.estado = 'En Proceso'
@@ -21,22 +24,42 @@ function resetForm() {
 }
 
 function handleSubmit() {
-    router.post('/crear', form, {
-        onSuccess: () => {
-            Swal.fire({
-                icon: 'success',
-                title: 'Proyecto creado',
-                text: '✅ El proyecto fue creado correctamente',
-                confirmButtonColor: '#2563eb'
-            })
-            resetForm()
-        },
-        onError: (errors) => {
-            Swal.fire({
-                icon: 'error',
-                title: 'Error',
-                text: '❌ No se pudo crear el proyecto. Revisa los campos.',
-                confirmButtonColor: '#dc2626'
+    if (isSubmitting.value) return // Evita múltiples clics
+
+    Swal.fire({
+        title: '¿Estás seguro?',
+        text: 'Estás a punto de crear un nuevo proyecto.',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#2563eb',
+        cancelButtonColor: '#d33',
+        confirmButtonText: 'Sí, crear proyecto',
+        cancelButtonText: 'Cancelar'
+    }).then((result) => {
+        if (result.isConfirmed) {
+            isSubmitting.value = true
+
+            router.post('/crear', form, {
+                onSuccess: () => {
+                    Swal.fire({
+                        icon: 'success',
+                        title: 'Proyecto creado',
+                        text: '✅ El proyecto fue creado correctamente',
+                        confirmButtonColor: '#2563eb'
+                    })
+                    resetForm()
+                },
+                onError: () => {
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Error',
+                        text: '❌ No se pudo crear el proyecto. Revisa los campos.',
+                        confirmButtonColor: '#dc2626'
+                    })
+                },
+                onFinish: () => {
+                    isSubmitting.value = false
+                }
             })
         }
     })
@@ -44,7 +67,6 @@ function handleSubmit() {
 </script>
 
 <template>
-
     <Head title="Crear Proyecto" />
 
     <AuthenticatedLayout>
@@ -120,8 +142,12 @@ function handleSubmit() {
 
                             <!-- Botón guardar -->
                             <button type="submit"
-                                class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition">
-                                Guardar
+                                :disabled="isSubmitting"
+                                class="px-4 py-2 rounded text-white transition"
+                                :class="isSubmitting
+                                    ? 'bg-blue-400 cursor-not-allowed'
+                                    : 'bg-blue-600 hover:bg-blue-700'">
+                                {{ isSubmitting ? 'Guardando...' : 'Guardar' }}
                             </button>
                         </div>
 

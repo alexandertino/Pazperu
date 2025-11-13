@@ -14,6 +14,10 @@ const irGestionMeta = () => {
     window.location.href = `/inventario/meta/manage`;
 };
 
+const iracuentacoriente = () => {
+    window.location.href = `/lascuentasgeneral`;
+};
+
 </script>
 
 <template>
@@ -29,6 +33,11 @@ const irGestionMeta = () => {
                     </h2>
                 </div>
                 <div>
+                    <button v-if="user.role === 'admin'" type="button" @click="iracuentacoriente"
+                    class="px-4 bg-blue-500 py-2 text-white rounded-lg shadow hover:bg-blue-800 focusable mr-2">
+                        cuenta corriente
+                    </button>
+
                     <button  v-if="user.role === 'admin'" type="button" @click="irGestionMeta"
                         class="px-4 py-2 bg-yellow-400 text-white rounded-lg shadow hover:bg-yellow-600 focusable">
                         ⚙️  
