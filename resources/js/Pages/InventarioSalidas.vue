@@ -2007,14 +2007,34 @@ const enviarAInventario = () => {
 
                                 <td class="p-3"> {{ salida.um }}</td>
                                 <td class="p-3">{{ formatearCantidad(salida.cantidad) }}</td>
-                                <td v-if="user.role === 'admin' || user.role === 'equipo'"
-                                    class="p-3 flex gap-2 items-center">
-                                    <a :href="`/proyectos/${proyecto.id}/salidas/${salida.id}/edit`" title="Editar"
-                                        class="flex items-center justify-center w-9 h-9 bg-blue-500 text-white rounded-lg hover:bg-blue-600 hover:scale-110 transition">
+                                <td v-if="user.role === 'admin' || user.role === 'equipo'" class="p-3 flex gap-2 items-center">
+                                    <!-- Botón Editar - deshabilitado si está aceptado -->
+                                    <a 
+                                        :href="salida.estado === 'aceptado' ? '#' : `/proyectos/${proyecto.id}/salidas/${salida.id}/edit`"
+                                        :class="[
+                                            'flex items-center justify-center w-9 h-9 rounded-lg transition',
+                                            salida.estado === 'aceptado' 
+                                                ? 'bg-gray-400 text-gray-200 cursor-not-allowed' 
+                                                : 'bg-blue-500 text-white hover:bg-blue-600 hover:scale-110'
+                                        ]"
+                                        :title="salida.estado === 'aceptado' ? 'No se puede editar salidas aceptadas' : 'Editar'"
+                                        @click="salida.estado === 'aceptado' && $event.preventDefault()"
+                                    >
                                         ✏️
                                     </a>
-                                    <button @click="eliminarSalida(salida.id)" title="Eliminar"
-                                        class="flex items-center justify-center w-9 h-9 bg-red-500 text-white rounded-lg hover:bg-red-600 hover:scale-110 transition">
+                                    
+                                    <!-- Botón Eliminar - deshabilitado si está aceptado -->
+                                    <button    
+                                        @click="salida.estado === 'aceptado' ? null : eliminarSalida(salida.id)"
+                                        :class="[
+                                            'flex items-center justify-center w-9 h-9 rounded-lg transition',
+                                            salida.estado === 'aceptado' 
+                                                ? 'bg-gray-400 text-gray-200 cursor-not-allowed' 
+                                                : 'bg-red-500 text-white hover:bg-red-600 hover:scale-110'
+                                        ]"
+                                        :title="salida.estado === 'aceptado' ? 'No se puede eliminar salidas aceptadas' : 'Eliminar'"
+                                        :disabled="salida.estado === 'aceptado'"
+                                    >
                                         🗑️
                                     </button>
                                 </td>

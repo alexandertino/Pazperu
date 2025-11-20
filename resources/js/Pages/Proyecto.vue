@@ -15,7 +15,7 @@ const irGestionMeta = () => {
 };
 
 const iracuentacoriente = () => {
-    window.location.href = `/lascuentasgeneral`;
+    window.location.href = `/cuentas`;
 };
 
 </script>
@@ -35,7 +35,7 @@ const iracuentacoriente = () => {
                 <div>
                     <button v-if="user.role === 'admin'" type="button" @click="iracuentacoriente"
                     class="px-4 bg-blue-500 py-2 text-white rounded-lg shadow hover:bg-blue-800 focusable mr-2">
-                        cuenta corriente
+                        Cuenta general
                     </button>
 
                     <button  v-if="user.role === 'admin'" type="button" @click="irGestionMeta"

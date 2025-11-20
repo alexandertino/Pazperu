@@ -22,6 +22,9 @@ use App\Http\Controllers\UnidadMedidaController;
 use App\Http\Controllers\SolicitanteController;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Fondos\SubcuentaController;
+use App\Http\Controllers\Cuentas\CuentaGeneralController;
+use App\Http\Controllers\Movimientos\MovimientoController;
 use Inertia\Inertia;
 
 Route::get('/', function () {
@@ -279,5 +282,50 @@ Route::middleware('auth')->group(function () {
     Route::get('/unidades-medida', [UnidadMedidaController::class, 'index'])->name('unidades_medida.index');
     Route::get('/solicitantes', [SolicitanteController::class, 'index'])->name('solicitantes.index');
 });
+
+
+/* Cuentas (Inertia pages) */
+Route::get('/cuentas', [CuentaGeneralController::class, 'index'])->name('cuentas.index');
+Route::get('/cuentas/create', [CuentaGeneralController::class, 'create'])->name('cuentas.create');
+Route::post('/cuentas', [CuentaGeneralController::class, 'store'])->name('cuentas.store');
+Route::get('/cuentas/{id}', [CuentaGeneralController::class, 'show'])->name('cuentas.show');
+Route::get('/cuentas/{id}/edit', [CuentaGeneralController::class, 'edit'])->name('cuentas.edit');
+Route::put('/cuentas/{id}', [CuentaGeneralController::class, 'update'])->name('cuentas.update');
+Route::delete('/cuentas/{id}', [CuentaGeneralController::class, 'destroy'])->name('cuentas.destroy');
+
+/* Fondos page (Inertia) */
+Route::get('/cuentas/{id}/fondos', function ($id) {
+    $cuenta = \App\Models\CuentaGeneral::findOrFail($id);
+    $fondos = \App\Models\Subcuenta::where('cuenta_id', $id)->with('movimientos')->get();
+    return Inertia::render('Fondos/Index', ['cuenta' => $cuenta, 'fondos' => $fondos]);
+})->name('cuentas.fondos');
+
+//apis:
+// MOVIMIENTOS GENERALES
+Route::get('/movimientos', [MovimientoController::class, 'index']);
+Route::get('/movimientos/create', [MovimientoController::class, 'create'])->name('movimientos.create');
+Route::get('/movimientos/{id}/edit', [MovimientoController::class, 'edit'])->name('movimientos.edit');
+
+Route::post('/movimientos', [MovimientoController::class, 'store']);
+
+Route::get('/movimientos/{id}', [MovimientoController::class, 'show']);
+Route::put('/movimientos/{id}', [MovimientoController::class, 'update']); // ✔ FALTABA
+Route::delete('/movimientos/{id}', [MovimientoController::class, 'destroy']);
+
+// Fondos API
+// FONDOS (Subcuentas)
+Route::get("/fondos",        [SubcuentaController::class, "index"])->name("fondos.index");
+Route::get("/fondos/create", [SubcuentaController::class, "create"])->name("fondos.create");
+Route::post("/fondos",       [SubcuentaController::class, "store"])->name("fondos.store");
+Route::get("/fondos/{id}/edit", [SubcuentaController::class, "edit"])->name("fondos.edit");
+Route::put("/fondos/{id}",      [SubcuentaController::class, "update"])->name("fondos.update");
+Route::delete("/fondos/{id}",   [SubcuentaController::class, "destroy"])->name("fondos.destroy");
+
+Route::get('/fondos/{id}/detalle', [SubcuentaController::class, 'show'])
+    ->name('fondos.detalle');
+
+
+// API para actualizar cuenta (saldo inicial...)
+Route::put('/cuentas/{id}', [CuentaGeneralController::class, 'update']); // ya definido en web controller
 
 require __DIR__ . '/auth.php';
