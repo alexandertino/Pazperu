@@ -11,13 +11,21 @@ return new class extends Migration
         Schema::create('subcuentas', function (Blueprint $table) {
             $table->id();
 
-            $table->foreignId("cuenta_id")
-                ->constrained("cuentas_generales")
-                ->onDelete("cascade");
+            $table->foreignId('cuenta_id')
+                ->constrained('cuentas_generales')
+                ->onDelete('cascade');
 
-            $table->string("nombre");
-            $table->decimal("saldo_inicial", 12, 2)->default(0);
-            $table->text("descripcion")->nullable();
+            $table->string('nombre');
+
+            $table->decimal('saldo_inicial', 12, 2)
+                  ->default(0);
+
+            // 👇 NUEVA COLUMNA
+            $table->decimal('saldo_actual', 12, 2)
+                  ->nullable()
+                  ->after('saldo_inicial');
+
+            $table->text('descripcion')->nullable();
 
             $table->timestamps();
         });

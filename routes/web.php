@@ -43,6 +43,11 @@ Route::get('/dashboard', function () {
 // Rutas protegidas (web + sesión)
 Route::middleware('auth')->group(function () {
 
+    // routes/web.php
+Route::get('proyectos/{proyecto}/inventario-salidas', [InventarioSalidaController::class, 'show'])
+    ->name('proyectos.inventario_salidas')
+    ->defaults('component', 'ProyectosMovimientos/Show/ProyectoMovimientosShow');
+    
     Route::prefix('proyectos/{proyecto}')->name('proyectos.')->controller(SalidaController::class)->group(function () {
         // Listado (index)
         Route::get('/salidas', 'index')->name('salidas');
@@ -97,8 +102,6 @@ Route::middleware('auth')->group(function () {
     // Grupo de rutas que pertenecen a un proyecto específico
     Route::prefix('proyectos/{proyecto}')->name('proyectos.')->group(function () {
 
-        // Inventario-salidas view
-        Route::get('inventario-salidas', [InventarioSalidaController::class, 'show'])->name('inventario_salidas');
 
         // Inventarios
         Route::get('inventarios', [InventarioController::class, 'index'])->name('inventarios.index');
@@ -327,5 +330,23 @@ Route::get('/fondos/{id}/detalle', [SubcuentaController::class, 'show'])
 
 // API para actualizar cuenta (saldo inicial...)
 Route::put('/cuentas/{id}', [CuentaGeneralController::class, 'update']); // ya definido en web controller
+// Rutas para cuentas
+Route::resource('cuentas', CuentaGeneralController::class);
+
+Route::resource('cuentas', CuentaGeneralController::class);
+
+// Ruta para recalcular (debe ir ANTES del resource)
+Route::post('/cuentas/{cuenta}/recalcular', [CuentaGeneralController::class, 'recalcular'])
+    ->name('cuentas.recalcular')
+    ->where('cuenta', '[0-9]+');
+
+// Ruta para recalcular todo
+Route::post('/cuentas/recalcular-todo', [CuentaGeneralController::class, 'recalcularTodo'])
+    ->name('cuentas.recalcular.todo');
+
+Route::post(
+    '/subcuentas/recalcular-saldos',
+    [SubcuentaController::class, 'recalcularSaldos']
+)->name('subcuentas.recalcular');
 
 require __DIR__ . '/auth.php';

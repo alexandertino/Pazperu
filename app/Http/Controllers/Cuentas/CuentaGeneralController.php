@@ -16,15 +16,8 @@ class CuentaGeneralController extends Controller
     {
         $cuentas = CuentaGeneral::with('movimientos')->get();
 
-        // Agregar el saldo actual calculado
         foreach ($cuentas as $c) {
-            $saldo = $c->saldo_inicial;
-
-            foreach ($c->movimientos as $m) {
-                $saldo += ($m->deudor ?? 0) - ($m->acreedor ?? 0);
-            }
-
-            $c->saldo_actual = $saldo; // ← Se envía al frontend
+            $c->saldo_actual = SaldosService::obtenerSaldoActualCuenta($c->id);
         }
 
         return Inertia::render('Cuentas/Index', [
@@ -32,26 +25,158 @@ class CuentaGeneralController extends Controller
         ]);
     }
 
-
     public function show($id)
     {
         $cuenta = CuentaGeneral::findOrFail($id);
 
-        $movimientos = Movimiento::with('subcuenta') // ← NECESARIO
-                        ->where('cuenta_general_id', $id)
-                        ->orderBy('fecha_operacion')
-                        ->orderBy('id')
-                        ->get();
+        // 🔴 ORDEN CONTABLE CORRECTO: numero ASC, id ASC
+        $movimientos = Movimiento::with('subcuenta')
+            ->where('cuenta_general_id', $id)
+            ->orderBy('numero', 'asc')
+            ->orderBy('id', 'asc')
+            ->get()
+            ->map(function ($movimiento) use ($cuenta) {
+
+                // Usar saldo de BD (ya recalculado correctamente)
+                $saldo = floatval($movimiento->saldo ?? 0);
+
+                return [
+                    'id' => $movimiento->id,
+                    'numero' => $movimiento->numero,
+                    'fecha_operacion' => $movimiento->fecha_operacion,
+                    'medio_pago' => $movimiento->medio_pago,
+                    'descripcion' => $movimiento->descripcion,
+                    'deudor' => floatval($movimiento->deudor ?? 0),
+                    'acreedor' => floatval($movimiento->acreedor ?? 0),
+                    'saldo' => $saldo,
+                    'subcuenta_id' => $movimiento->subcuenta_id,
+                    'subcuenta' => $movimiento->subcuenta,
+                    'created_at' => $movimiento->created_at,
+                    'updated_at' => $movimiento->updated_at,
+                ];
+            });
 
         $fondos = Subcuenta::where('cuenta_id', $id)->get();
 
+        $saldo_actual = SaldosService::obtenerSaldoActualCuenta($id);
+
         return Inertia::render('Cuentas/Show', [
-            'cuenta' => $cuenta,
+            'cuenta' => [
+                'id' => $cuenta->id,
+                'nombre' => $cuenta->nombre,
+                'descripcion' => $cuenta->descripcion,
+                'saldo_inicial' => floatval($cuenta->saldo_inicial ?? 0),
+                'saldo_actual' => $saldo_actual,
+                'created_at' => $cuenta->created_at,
+                'updated_at' => $cuenta->updated_at,
+            ],
             'movimientos' => $movimientos,
             'fondos' => $fondos,
+            'ultimo_saldo' => $saldo_actual,
         ]);
     }
 
+    /**
+     * ⚠️ ESTE MÉTODO YA NO SE USA PARA SALDOS
+     * Se mantiene SOLO para compatibilidad
+     */
+    private function calcularSaldoHastaMovimiento($movimientoId, $cuentaId)
+    {
+        $cuenta = CuentaGeneral::find($cuentaId);
+        $saldo = floatval($cuenta->saldo_inicial ?? 0);
+
+        $movimientos = Movimiento::where('cuenta_general_id', $cuentaId)
+            ->orderBy('numero', 'asc')
+            ->orderBy('id', 'asc')
+            ->get();
+
+        foreach ($movimientos as $mov) {
+            if ($mov->id == $movimientoId) {
+                break;
+            }
+
+            $saldo += (floatval($mov->deudor ?? 0) - floatval($mov->acreedor ?? 0));
+        }
+
+        return $saldo;
+    }
+
+    /**
+     * Recalcular todos los saldos de la cuenta
+     */
+    public function recalcular($id)
+    {
+        try {
+            $cuenta = CuentaGeneral::findOrFail($id);
+
+            $saldoAnterior = SaldosService::obtenerSaldoActualCuenta($id);
+            SaldosService::recalcularCuenta($id);
+            $nuevoSaldo = SaldosService::obtenerSaldoActualCuenta($id);
+
+            return redirect()->back()->with([
+                'success' => 'Saldos recalculados correctamente',
+                'data' => [
+                    'success' => true,
+                    'message' => 'Saldos recalculados correctamente',
+                    'nuevo_saldo' => $nuevoSaldo,
+                    'saldo_anterior' => $saldoAnterior,
+                    'diferencia' => $nuevoSaldo - $saldoAnterior,
+                    'cuenta' => $cuenta->nombre,
+                    'fecha' => now()->format('d/m/Y H:i:s')
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return redirect()->back()->withErrors([
+                'error' => 'Error al recalcular saldos: ' . $e->getMessage()
+            ]);
+        }
+    }
+
+    /**
+     * Recalcular TODAS las cuentas
+     */
+    public function recalcularTodo()
+    {
+        try {
+            $cuentas = CuentaGeneral::all();
+            $resultados = [];
+
+            foreach ($cuentas as $cuenta) {
+                try {
+                    $saldoAnterior = SaldosService::obtenerSaldoActualCuenta($cuenta->id);
+                    $saldoNuevo = SaldosService::recalcularCuenta($cuenta->id);
+
+                    $resultados[] = [
+                        'id' => $cuenta->id,
+                        'cuenta' => $cuenta->nombre,
+                        'saldo_anterior' => $saldoAnterior,
+                        'saldo_nuevo' => $saldoNuevo,
+                        'diferencia' => $saldoNuevo - $saldoAnterior,
+                        'estado' => 'success'
+                    ];
+                } catch (\Exception $e) {
+                    $resultados[] = [
+                        'id' => $cuenta->id,
+                        'cuenta' => $cuenta->nombre,
+                        'estado' => 'error',
+                        'mensaje_error' => $e->getMessage()
+                    ];
+                }
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Recálculo completado',
+                'total_cuentas' => count($cuentas),
+                'resultados' => $resultados
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error en recálculo global: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 
     public function create()
     {
@@ -67,8 +192,6 @@ class CuentaGeneralController extends Controller
         ]);
 
         CuentaGeneral::create($data);
-
-        // ❗ NO CREAMOS movimiento de saldo inicial (evita duplicado)
 
         return redirect()->route('cuentas.index');
     }
@@ -89,11 +212,6 @@ class CuentaGeneralController extends Controller
 
         $c = CuentaGeneral::findOrFail($id);
         $c->update($data);
-
-        // Recalcular porque el saldo inicial sí afecta cálculos
-        if (array_key_exists('saldo_inicial', $data)) {
-            SaldosService::recalcularCuenta($c->id);
-        }
 
         return redirect()->route('cuentas.show', $c->id);
     }

@@ -24,13 +24,14 @@ class InventarioSalidaController extends Controller
         $Ambanco = DB::table($tablaAmbanco)->orderBy('fecha', 'asc')->get();
         $tablaEasy = DB::table($tablaEasy)->orderBy('created_at', 'asc')->get();
 
-        return inertia('InventarioSalidas', [
+        // Cambia 'InventarioSalidas' por el nuevo componente organizado
+        return inertia('ProyectosMovimientos/Show/ProyectoMovimientosShow', [
             'proyecto' => $proyecto,
             'inventarios' => $inventarios,
             'salidas' => $salidas,
-            'caja'=>$Amcaja,
-            'banco'=>$Ambanco,
-            'easy'=>$tablaEasy
+            'caja' => $Amcaja,
+            'banco' => $Ambanco,
+            'easy' => $tablaEasy,
         ]);
     }
 }

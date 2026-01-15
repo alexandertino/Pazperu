@@ -1,3 +1,7 @@
+<!--nada ya no sirve archivo a eliminar-->
+<!--nada ya no sirve archivo a eliminar-->
+<!--nada ya no sirve archivo a eliminar-->
+<!--nada ya no sirve archivo a eliminar-->
 <script setup>
 /* ==========================
 📌 IMPORTACIONES Y CONFIGURACIÓN
@@ -66,6 +70,7 @@ function getDateParts(fecha) {
   if (!d) return { mes: null, anio: null };
   return { mes: d.getMonth() + 1, anio: d.getFullYear() };
 }
+
 
 // Filtros (reemplaza/añade donde tengas tus computed)
 const actasCajaFiltradas = computed(() =>
@@ -2925,3 +2930,4 @@ table td {
     border-bottom: 1px solid rgba(0, 0, 0, 0.06);
 }
 </style>
+<!--nada ya no sirve archivo a elimnar-->

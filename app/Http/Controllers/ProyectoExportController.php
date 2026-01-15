@@ -87,7 +87,6 @@ class ProyectoExportController extends Controller
         $ultimaFilaInv = count($inventarios) + 3;
         $ultimaFilaSal = count($salidas) + 3;
 
-        // -------- Inventario --------
         $sheet->mergeCells('A2:H2');
         $sheet->setCellValue('A2', 'INVENTARIO DE PRODUCTOS');
         $sheet->getStyle('A2')->getFont()->setBold(true)->setSize(14);
@@ -109,7 +108,6 @@ class ProyectoExportController extends Controller
         $sheet->getStyle("A3:H{$ultimaFilaInv}")->applyFromArray($innerBorders);
         $sheet->getStyle("A3:H{$ultimaFilaInv}")->applyFromArray($outerBorders);
 
-        // -------- Salidas --------
         $sheet->mergeCells('I2:Q2');
         $sheet->setCellValue('I2', 'SALIDAS');
         $sheet->getStyle('I2')->getFont()->setBold(true)->setSize(14);
@@ -121,18 +119,11 @@ class ProyectoExportController extends Controller
             ->getStartColor()->setRGB('C6E0B4');
 
         $headersSalidas = [
-            'N° ACTA',
-            'NOMBRE',
-            'LUGAR',
-            'DISTRITO',
-            'FECHA',
-            'CÓDIGO PRODUCTO',
-            'PRODUCTO',
-            'U.M.',
-            'CANTIDAD'
+            'N° ACTA', 'NOMBRE', 'LUGAR', 'DISTRITO', 'FECHA', 
+            'CÓDIGO PRODUCTO', 'PRODUCTO', 'U.M.', 'CANTIDAD'
         ];
-
         $sheet->fromArray($headersSalidas, null, 'I3');
+
         $sheet->getStyle('I3:Q3')->getFont()->setBold(true);
         $sheet->getStyle('I3:Q3')->getAlignment()
             ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
@@ -196,3 +187,4 @@ class ProyectoExportController extends Controller
         return response()->download($rutaArchivo);
     }
 }
+

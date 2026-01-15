@@ -2,55 +2,117 @@
 
 namespace App\Services;
 
-use App\Models\CuentaGeneral;
 use App\Models\Movimiento;
 use App\Models\Subcuenta;
-use App\Models\SubcuentaMovimiento;
 use Illuminate\Support\Facades\DB;
+use App\Models\CuentaGeneral;
+use App\Models\SubcuentaMovimiento;
 
 class SaldosService
 {
-    // Recalcula saldos de todos los movimientos de una cuenta
-    public static function recalcularCuenta(int $cuentaId): void
+    /**
+     * Recalcula TODOS los saldos de una cuenta
+     * ORDEN CONTABLE: numero ASC, id ASC
+     */
+    public static function recalcularCuenta($cuentaId)
     {
-        DB::transaction(function () use ($cuentaId) {
-            $cuenta = CuentaGeneral::findOrFail($cuentaId);
-            $movs = Movimiento::where('cuenta_general_id', $cuentaId)
-                        ->orderBy('fecha_operacion')
-                        ->orderBy('id')
-                        ->get();
+        return DB::transaction(function () use ($cuentaId) {
+
+            $cuenta = CuentaGeneral::find($cuentaId);
+            if (!$cuenta) {
+                return 0;
+            }
 
             $saldo = floatval($cuenta->saldo_inicial ?? 0);
 
-            foreach ($movs as $m) {
-                $saldo = $saldo + floatval($m->deudor) - floatval($m->acreedor);
-                if ((string)$m->saldo !== (string)($saldo)) {
-                    $m->saldo = $saldo;
-                    $m->saveQuietly();
+            // 👉 ORDEN CORRECTO (NO por ID)
+            $movimientos = Movimiento::where('cuenta_general_id', $cuentaId)
+                ->orderBy('numero', 'asc')
+                ->orderBy('id', 'asc')
+                ->get();
+
+            foreach ($movimientos as $movimiento) {
+
+                $deudor   = floatval($movimiento->deudor ?? 0);
+                $acreedor = floatval($movimiento->acreedor ?? 0);
+
+                $saldo += ($deudor - $acreedor);
+
+                // Guardar saldo acumulado
+                $movimiento->saldo = $saldo;
+                $movimiento->save();
+
+                // Recalcular subcuenta si aplica
+                if ($movimiento->subcuenta_id) {
+                    self::recalcularSubcuenta($movimiento->subcuenta_id);
                 }
             }
+
+            return $saldo;
         });
     }
 
-    // Recalcula saldos de una subcuenta
-    public static function recalcularSubcuenta(int $subcuentaId): void
+    /**
+     * Recalcula los saldos de una subcuenta
+     * (se mantiene por ID porque no tienes campo numero allí)
+     */
+    public static function recalcularSubcuenta($subcuentaId)
     {
-        DB::transaction(function () use ($subcuentaId) {
-            $sub = Subcuenta::findOrFail($subcuentaId);
-            $movs = SubcuentaMovimiento::where('subcuenta_id', $subcuentaId)
-                        ->orderBy('fecha')
-                        ->orderBy('id')
-                        ->get();
+        return DB::transaction(function () use ($subcuentaId) {
 
-            $saldo = floatval($sub->saldo_inicial ?? 0);
-
-            foreach ($movs as $m) {
-                $saldo = $saldo + floatval($m->deudor) - floatval($m->acreedor);
-                if ((string)$m->saldo !== (string)($saldo)) {
-                    $m->saldo = $saldo;
-                    $m->saveQuietly();
-                }
+            $subcuenta = Subcuenta::find($subcuentaId);
+            if (!$subcuenta) {
+                return 0;
             }
+
+            $saldo = floatval($subcuenta->saldo_inicial ?? 0);
+
+            $movimientos = SubcuentaMovimiento::where('subcuenta_id', $subcuentaId)
+                ->orderBy('id', 'asc')
+                ->get();
+
+            foreach ($movimientos as $movimiento) {
+
+                $deudor   = floatval($movimiento->deudor ?? 0);
+                $acreedor = floatval($movimiento->acreedor ?? 0);
+
+                $saldo += ($deudor - $acreedor);
+
+                $movimiento->saldo = $saldo;
+                $movimiento->save();
+            }
+
+            $subcuenta->saldo_actual = $saldo;
+            $subcuenta->save();
+
+            return $saldo;
         });
+    }
+
+    /**
+     * Obtiene el saldo actual de una cuenta (sin modificar BD)
+     * MISMO ORDEN CONTABLE
+     */
+    public static function obtenerSaldoActualCuenta($cuentaId)
+    {
+        $cuenta = CuentaGeneral::find($cuentaId);
+        if (!$cuenta) {
+            return 0;
+        }
+
+        $saldo = floatval($cuenta->saldo_inicial ?? 0);
+
+        $movimientos = Movimiento::where('cuenta_general_id', $cuentaId)
+            ->orderBy('numero', 'asc')
+            ->orderBy('id', 'asc')
+            ->get();
+
+        foreach ($movimientos as $movimiento) {
+            $deudor   = floatval($movimiento->deudor ?? 0);
+            $acreedor = floatval($movimiento->acreedor ?? 0);
+            $saldo += ($deudor - $acreedor);
+        }
+
+        return $saldo;
     }
 }
