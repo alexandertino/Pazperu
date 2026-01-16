@@ -94,6 +94,25 @@ const saldoActual = computed(() => {
     const lista = movimientosCalculados.value;
     return lista.length ? lista[lista.length - 1].saldo : 0;
 });
+
+// 🔹 NUEVO: Total Deudor
+const totalDeudor = computed(() => {
+    return movimientosCalculados.value.reduce((sum, m) => {
+        return sum + Number(m.deudor || 0);
+    }, 0);
+});
+
+// 🔹 NUEVO: Total Acreedor
+const totalAcreedor = computed(() => {
+    return movimientosCalculados.value.reduce((sum, m) => {
+        return sum + Number(m.acreedor || 0);
+    }, 0);
+});
+
+// 🔹 NUEVO: Diferencia (Deudor - Acreedor)
+const diferenciaTotales = computed(() => {
+    return totalDeudor.value - totalAcreedor.value;
+});
 </script>
 
 <template>
@@ -107,7 +126,7 @@ const saldoActual = computed(() => {
                 </h1>
 
                 <!-- TARJETAS -->
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                     <div class="p-6 bg-white dark:bg-gray-800 rounded-lg shadow border-l-4 border-purple-600">
                         <h2 class="text-sm text-gray-500 dark:text-gray-400">
                             Saldo Inicial
@@ -123,6 +142,25 @@ const saldoActual = computed(() => {
                         </h2>
                         <p class="text-2xl font-bold text-green-600 dark:text-green-400">
                             S/ {{ formatoDinero(saldoActual) }}
+                        </p>
+                    </div>
+
+                    <!-- NUEVOS CUADROS -->
+                    <div class="p-6 bg-white dark:bg-gray-800 rounded-lg shadow border-l-4 border-blue-600">
+                        <h2 class="text-sm text-gray-500 dark:text-gray-400">
+                            Total Deudor
+                        </h2>
+                        <p class="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                            S/ {{ formatoDinero(totalDeudor) }}
+                        </p>
+                    </div>
+
+                    <div class="p-6 bg-white dark:bg-gray-800 rounded-lg shadow border-l-4 border-red-600">
+                        <h2 class="text-sm text-gray-500 dark:text-gray-400">
+                            Total Acreedor
+                        </h2>
+                        <p class="text-2xl font-bold text-red-600 dark:text-red-400">
+                            S/ {{ formatoDinero(totalAcreedor) }}
                         </p>
                     </div>
                 </div>
@@ -158,7 +196,7 @@ const saldoActual = computed(() => {
                 </div>
 
                 <!-- TABLA -->
-                <div class="overflow-x-auto shadow-lg rounded-lg">
+                <div class="overflow-x-auto shadow-lg rounded-lg mb-6">
                     <table class="w-full border border-gray-300 dark:border-gray-700">
                         <thead class="bg-purple-600 text-white">
                             <tr>
@@ -215,6 +253,40 @@ const saldoActual = computed(() => {
                             </tr>
                         </tbody>
                     </table>
+                </div>
+
+                <!-- NUEVA SECCIÓN: RESUMEN DE TOTALES -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+                    <div class="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg shadow border">
+                        <h3 class="text-sm font-semibold text-gray-600 dark:text-gray-400 mb-2">
+                            Resumen de Totales
+                        </h3>
+                        <div class="space-y-2">
+                            <div class="flex justify-between items-center">
+                                <span class="text-blue-600 dark:text-blue-400">Total Deudor:</span>
+                                <span class="font-bold text-blue-600 dark:text-blue-400">
+                                    S/ {{ formatoDinero(totalDeudor) }}
+                                </span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-red-600 dark:text-red-400">Total Acreedor:</span>
+                                <span class="font-bold text-red-600 dark:text-red-400">
+                                    S/ {{ formatoDinero(totalAcreedor) }}
+                                </span>
+                            </div>
+                            <div class="pt-2 border-t dark:border-gray-700">
+                                <div class="flex justify-between items-center">
+                                    <span class="font-semibold text-gray-700 dark:text-gray-300">Diferencia:</span>
+                                    <span 
+                                        class="font-bold"
+                                        :class="diferenciaTotales >= 0 ? 'text-green-600 dark:text-green-400' : 'text-orange-600 dark:text-orange-400'"
+                                    >
+                                        S/ {{ formatoDinero(diferenciaTotales) }}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

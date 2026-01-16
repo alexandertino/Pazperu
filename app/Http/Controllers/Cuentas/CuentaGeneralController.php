@@ -30,7 +30,7 @@ class CuentaGeneralController extends Controller
         $cuenta = CuentaGeneral::findOrFail($id);
 
         // 🔴 ORDEN CONTABLE CORRECTO: numero ASC, id ASC
-        $movimientos = Movimiento::with('subcuenta')
+        $movimientos = Movimiento::with('subcuenta', 'movimientoPendiente', 'movimientoSaldante')
             ->where('cuenta_general_id', $id)
             ->orderBy('numero', 'asc')
             ->orderBy('id', 'asc')
@@ -51,6 +51,22 @@ class CuentaGeneralController extends Controller
                     'saldo' => $saldo,
                     'subcuenta_id' => $movimiento->subcuenta_id,
                     'subcuenta' => $movimiento->subcuenta,
+                    // 🔴 NUEVAS PROPIEDADES DE PENDIENTE
+                    'es_pendiente' => (bool) $movimiento->es_pendiente,
+                    'pendiente_saldado' => (bool) $movimiento->pendiente_saldado,
+                    'movimiento_saldante_id' => $movimiento->movimiento_saldante_id,
+                    'movimiento_pendiente_id' => $movimiento->movimiento_pendiente_id,
+                    // 🔴 RELACIONES PARA TRAZABILIDAD
+                    'movimiento_pendiente' => $movimiento->movimientoPendiente ? [
+                        'id' => $movimiento->movimientoPendiente->id,
+                        'numero' => $movimiento->movimientoPendiente->numero,
+                        'descripcion' => $movimiento->movimientoPendiente->descripcion,
+                    ] : null,
+                    'movimiento_saldante' => $movimiento->movimientoSaldante ? [
+                        'id' => $movimiento->movimientoSaldante->id,
+                        'numero' => $movimiento->movimientoSaldante->numero,
+                        'descripcion' => $movimiento->movimientoSaldante->descripcion,
+                    ] : null,
                     'created_at' => $movimiento->created_at,
                     'updated_at' => $movimiento->updated_at,
                 ];

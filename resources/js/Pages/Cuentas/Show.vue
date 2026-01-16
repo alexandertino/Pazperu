@@ -20,6 +20,15 @@
                                 : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'">
                                 Saldo: S/ {{ formatoDinero(cuenta.saldo_actual) }}
                             </span>
+                            
+                            <!-- Contador de pendientes -->
+                            <span :class="contarPendientesActivos() > 0 
+                                ? 'bg-amber-500 text-white animate-pulse' 
+                                : 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'"
+                                class="text-sm font-semibold px-3 py-1 rounded-full flex items-center gap-2">
+                                <span>⏳</span>
+                                Pendientes: {{ contarPendientesActivos() }}
+                            </span>
                         </div>
                     </div>
 
@@ -47,15 +56,13 @@
                             class="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition text-sm font-medium">
                             ➕ Nuevo Movimiento
                         </Link>
-
-
                     </div>
                 </div>
             </div>
 
             <!-- FILTROS -->
             <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 mb-6">
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                             Desde
@@ -83,24 +90,32 @@
                                 🔍
                             </div>
                         </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                Fondo
-                            </label>
-                            <select v-model="filtroFondo"
-                                class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md shadow-sm text-sm p-2">
-                                <option value="">Todos los fondos</option>
-                                <option v-for="fondo in fondos" :key="fondo.id" :value="fondo.id">
-                                    {{ fondo.nombre }}
-                                </option>
-                            </select>
-                        </div>
+                    </div>
 
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            Fondo
+                        </label>
+                        <select v-model="filtroFondo"
+                            class="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md shadow-sm text-sm p-2">
+                            <option value="">Todos los fondos</option>
+                            <option v-for="fondo in fondos" :key="fondo.id" :value="fondo.id">
+                                {{ fondo.nombre }}
+                            </option>
+                        </select>
                     </div>
                 </div>
 
-                <!-- BOTONES FILTRO -->
-                <div class="mt-4 flex flex-wrap gap-2">
+                <!-- FILTRO DE ESTADO PENDIENTE -->
+                <div class="mt-4 flex flex-wrap items-center gap-4">
+                    <div class="flex items-center">
+                        <input type="checkbox" id="filtroPendiente" v-model="filtroSoloPendientes" 
+                               class="h-4 w-4 text-amber-500 rounded border-gray-300 focus:ring-amber-500">
+                        <label for="filtroPendiente" class="ml-2 text-sm text-gray-700 dark:text-gray-300">
+                            Mostrar solo pendientes activos
+                        </label>
+                    </div>
+                    
                     <button @click="limpiarFiltros"
                         class="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600 rounded-md text-sm">
                         Limpiar Filtros
@@ -113,6 +128,12 @@
                         <div>
                             <span class="text-gray-600 dark:text-gray-400">Movimientos: </span>
                             <span class="font-semibold">{{ movimientosFiltrados.length }}</span>
+                        </div>
+                        <div>
+                            <span class="text-gray-600 dark:text-gray-400">Pendientes: </span>
+                            <span class="font-semibold text-amber-600">
+                                {{ contarPendientesFiltrados() }}
+                            </span>
                         </div>
                         <div>
                             <span class="text-gray-600 dark:text-gray-400">Débitos: </span>
@@ -142,6 +163,7 @@
                 <table class="min-w-full text-sm text-left border dark:border-gray-700 bg-white dark:bg-gray-800">
                     <thead class="sticky top-0 z-10 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-100">
                         <tr>
+                            <th class="p-3 w-12 text-center">●</th> <!-- Columna para el círculo -->
                             <th class="p-3">N°</th>
                             <th class="p-3">Fecha</th>
                             <th class="p-3">Medio Pago</th>
@@ -154,13 +176,64 @@
                         </tr>
                     </thead>
                     <tbody>
-                        <!-- Los movimientos YA VIENEN ORDENADOS POR ID desde el Controller -->
                         <tr v-for="mov in movimientosFiltrados" :key="mov.id"
-                            class="border-t dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition">
+                            :class="[
+                                'border-t dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition',
+                                mov.es_pendiente && !mov.pendiente_saldado ? 'border-l-2 border-l-amber-500' : '',
+                                mov.es_pendiente && mov.pendiente_saldado ? 'border-l-2 border-l-green-500' : ''
+                            ]">
+
+                            <!-- CÍRCULO DE PENDIENTE - AL INICIO -->
+                            <td class="p-3 text-center">
+                                <!-- Botón del círculo -->
+                                <button @click="togglePendiente(mov)"
+                                    :title="mov.es_pendiente ? (mov.pendiente_saldado ? 'Pendiente saldado - Click para quitar' : 'Pendiente activo - Click para quitar') : 'Click para marcar como pendiente'"
+                                    :class="[
+                                        'w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-110',
+                                        mov.es_pendiente && !mov.pendiente_saldado 
+                                            ? 'bg-amber-500 hover:bg-amber-600 shadow-md' 
+                                            : mov.es_pendiente && mov.pendiente_saldado
+                                                ? 'bg-green-500 hover:bg-green-600 shadow'
+                                                : 'bg-transparent border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700'
+                                    ]"
+                                    class="relative group">
+                                    
+                                    <!-- Icono dentro del círculo -->
+                                    <span class="text-white text-sm font-bold" 
+                                          v-if="mov.es_pendiente && !mov.pendiente_saldado">
+                                        P
+                                    </span>
+                                    <span class="text-white text-sm font-bold" 
+                                          v-else-if="mov.es_pendiente && mov.pendiente_saldado">
+                                        ✓
+                                    </span>
+                                    <span class="text-gray-400 text-sm" v-else>
+                                        ○
+                                    </span>
+                                    
+                                    <!-- Tooltip flotante -->
+                                    <div class="absolute -top-8 left-1/2 transform -translate-x-1/2 hidden group-hover:block z-20">
+                                        <div class="bg-gray-900 text-white text-xs rounded-lg px-2 py-1 whitespace-nowrap shadow-xl">
+                                            <div class="font-bold">
+                                                <span v-if="mov.es_pendiente && !mov.pendiente_saldado">⏳ PENDIENTE</span>
+                                                <span v-else-if="mov.es_pendiente && mov.pendiente_saldado">✅ SALDADO</span>
+                                                <span v-else>Marcar como pendiente</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </button>
+                            </td>
 
                             <!-- ID -->
-                            <td class="p-3 font-medium text-gray-500 dark:text-gray-400">
-                                {{ mov.numero }}
+                            <td class="p-3 font-medium text-gray-700 dark:text-gray-300">
+                                <div class="flex flex-col">
+                                    <span>{{ mov.numero }}</span>
+                                    <!-- Si salda un pendiente -->
+                                    <span v-if="mov.movimiento_pendiente_id" 
+                                          class="text-xs text-purple-600 dark:text-purple-400">
+                                        → Salda #{{ obtenerNumeroPendiente(mov.movimiento_pendiente_id) }}
+                                    </span>
+                                </div>
                             </td>
 
                             <!-- Fecha -->
@@ -177,6 +250,12 @@
                             <td class="p-3">
                                 <div class="font-medium text-gray-900 dark:text-gray-100">
                                     {{ mov.descripcion }}
+                                    <!-- Si fue saldado -->
+                                    <div v-if="mov.movimiento_saldante_id" 
+                                         class="text-xs text-green-600 dark:text-green-400 mt-1 flex items-center gap-1">
+                                        <span>✅</span>
+                                        Saldado por #{{ obtenerNumeroSaldante(mov.movimiento_saldante_id) }}
+                                    </div>
                                 </div>
                             </td>
 
@@ -187,10 +266,8 @@
                                     :class="getBadgeColor(mov.subcuenta.nombre)" title="Ver detalle del fondo">
                                     {{ mov.subcuenta.nombre }}
                                 </Link>
-
                                 <span v-else class="text-gray-400 text-xs">-</span>
                             </td>
-
 
                             <!-- Débito -->
                             <td class="p-3 text-right font-medium whitespace-nowrap">
@@ -236,7 +313,7 @@
 
                         <!-- SI NO HAY RESULTADOS -->
                         <tr v-if="movimientosFiltrados.length === 0">
-                            <td colspan="9" class="p-8 text-center text-gray-500 dark:text-gray-400">
+                            <td colspan="10" class="p-8 text-center text-gray-500 dark:text-gray-400">
                                 <div class="text-4xl mb-3">📊</div>
                                 <p class="text-lg mb-2">No hay movimientos</p>
                                 <p class="text-sm">Intenta cambiar los filtros o crear un nuevo movimiento</p>
@@ -248,11 +325,17 @@
 
             <!-- RESUMEN FINAL -->
             <div class="mt-6 p-4 bg-white dark:bg-gray-800 rounded-lg shadow border dark:border-gray-700">
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <div class="text-center p-3 bg-gray-50 dark:bg-gray-900 rounded-lg">
                         <p class="text-sm text-gray-600 dark:text-gray-400">Movimientos Filtrados</p>
                         <p class="text-2xl font-bold">{{ movimientosFiltrados.length }}</p>
                         <p class="text-xs text-gray-500 mt-1">de {{ props.movimientos.length }} totales</p>
+                    </div>
+
+                    <div class="text-center p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg">
+                        <p class="text-sm text-gray-600 dark:text-gray-400">Pendientes Activos</p>
+                        <p class="text-2xl font-bold text-amber-600">{{ contarPendientesActivos() }}</p>
+                        <p class="text-xs text-amber-500 mt-1">por saldar</p>
                     </div>
 
                     <div class="text-center p-4 bg-gray-50 dark:bg-gray-900 rounded-lg">
@@ -284,7 +367,7 @@ import Swal from "sweetalert2";
 
 const props = defineProps({
     cuenta: Object,
-    movimientos: Array, // Ya viene ordenado por ID desde el Controller
+    movimientos: Array,
     fondos: Array,
     ultimo_saldo: Number,
 });
@@ -294,16 +377,37 @@ const filtroFechaDesde = ref("");
 const filtroFechaHasta = ref("");
 const filtroDescripcion = ref("");
 const filtroFondo = ref("");
+const filtroSoloPendientes = ref(false);
 const recalculando = ref(false);
 
-// Inicializar filtros (último mes por defecto)
+// Inicializar filtros
 onMounted(() => {
     const hoy = new Date();
-
     filtroFechaDesde.value = '2021-01-01';
     filtroFechaHasta.value = hoy.toISOString().split('T')[0];
 });
 
+// Contar pendientes activos
+const contarPendientesActivos = () => {
+    return props.movimientos.filter(m => m.es_pendiente && !m.pendiente_saldado).length;
+};
+
+// Contar pendientes en los resultados filtrados
+const contarPendientesFiltrados = () => {
+    return movimientosFiltrados.value.filter(m => m.es_pendiente && !m.pendiente_saldado).length;
+};
+
+// Obtener número de movimiento pendiente
+const obtenerNumeroPendiente = (id) => {
+    const pendiente = props.movimientos.find(m => m.id === id);
+    return pendiente ? pendiente.numero : '?';
+};
+
+// Obtener número de movimiento saldante
+const obtenerNumeroSaldante = (id) => {
+    const saldante = props.movimientos.find(m => m.id === id);
+    return saldante ? saldante.numero : '?';
+};
 
 // Formato dinero
 const formatoDinero = (valor) => {
@@ -314,40 +418,34 @@ const formatoDinero = (valor) => {
         maximumFractionDigits: 2,
     });
 };
+
 // Parsear fecha YYYY-MM-DD sin zona horaria
 const parseFechaLocal = (fechaString) => {
     if (!fechaString) return null;
-
-    // Nos quedamos solo con YYYY-MM-DD
     const soloFecha = fechaString.substring(0, 10);
     const [year, month, day] = soloFecha.split('-');
-
-    return new Date(
-        Number(year),
-        Number(month) - 1,
-        Number(day)
-    );
+    return new Date(Number(year), Number(month) - 1, Number(day));
 };
 
 // Formato fecha (DD/MM/YYYY)
 const formatFechaDisplay = (fechaString) => {
     if (!fechaString) return "";
-
     const fecha = parseFechaLocal(fechaString);
     if (!fecha || isNaN(fecha.getTime())) return "";
-
     const dia = String(fecha.getDate()).padStart(2, '0');
     const mes = String(fecha.getMonth() + 1).padStart(2, '0');
     const año = fecha.getFullYear();
-
     return `${dia}/${mes}/${año}`;
 };
 
-
-
-// Filtrar movimientos (MANTIENE ORDEN POR ID)
+// Filtrar movimientos
 const movimientosFiltrados = computed(() => {
     let filtrados = [...props.movimientos];
+
+    // Filtro por estado pendiente
+    if (filtroSoloPendientes.value) {
+        filtrados = filtrados.filter(mov => mov.es_pendiente && !mov.pendiente_saldado);
+    }
 
     // DESDE
     if (filtroFechaDesde.value) {
@@ -385,7 +483,6 @@ const movimientosFiltrados = computed(() => {
     return filtrados;
 });
 
-
 // Resumen de movimientos
 const resumenMovimientos = computed(() => {
     let totalDeudor = 0;
@@ -404,21 +501,12 @@ const resumenMovimientos = computed(() => {
     };
 });
 
-
-//una const que ayude a ver los saldos de inicio y fin de cada mez por separado en una pantalla
-
-
-
-
 const saldoInicial = computed(() => {
     if (movimientosFiltrados.value.length === 0) return 0;
-
     const primerMov = movimientosFiltrados.value[0];
-
     const deudor = parseFloat(primerMov.deudor || 0);
     const acreedor = parseFloat(primerMov.acreedor || 0);
     const saldo = parseFloat(primerMov.saldo || 0);
-
     return saldo - deudor + acreedor;
 });
 
@@ -426,13 +514,11 @@ const saldoActual = computed(() => {
     if (movimientosFiltrados.value.length === 0) {
         return props.cuenta.saldo_actual || 0;
     }
-
     const ultimoMov = movimientosFiltrados.value[movimientosFiltrados.value.length - 1];
     return parseFloat(ultimoMov.saldo || 0);
 });
 
-
-// RECALCULAR SALDOS - FUNCIÓN CORREGIDA
+// RECALCULAR SALDOS
 const recalcularSaldos = () => {
     Swal.fire({
         title: '¿Recalcular saldos?',
@@ -442,8 +528,6 @@ const recalcularSaldos = () => {
                     <p class="font-bold text-amber-800 dark:text-amber-300">${props.cuenta.nombre}</p>
                     <p class="mt-1">Saldo actual: <span class="font-bold">S/ ${formatoDinero(props.cuenta.saldo_actual)}</span></p>
                 </div>
-                <p class="text-sm text-amber-600 mt-2">✓ Verificará cada movimiento</p>
-                <p class="text-sm text-amber-600">✓ Actualizará saldos acumulados</p>
                 <p class="text-sm text-amber-600 mt-2">⏱️ Esta operación puede tomar unos segundos</p>
               </div>`,
         icon: 'warning',
@@ -456,20 +540,14 @@ const recalcularSaldos = () => {
     }).then((result) => {
         if (result.isConfirmed) {
             recalculando.value = true;
-
-            // Usar Inertia con useForm (maneja CSRF automáticamente)
             const form = useForm({});
-
             form.post(`/cuentas/${props.cuenta.id}/recalcular`, {
                 preserveScroll: true,
                 preserveState: true,
                 onSuccess: (response) => {
-                    // Obtener datos de la respuesta
                     const flashData = response.props.flash?.data;
                     const successMessage = response.props.flash?.success;
-
                     if (flashData && flashData.success) {
-                        // Mostrar resultado detallado
                         Swal.fire({
                             title: '¡Recálculo completado!',
                             html: `<div class="text-left">
@@ -477,7 +555,6 @@ const recalcularSaldos = () => {
                                         <p class="font-bold text-lg text-green-800 dark:text-green-300">${flashData.cuenta}</p>
                                         <p class="text-sm mt-1">${flashData.message}</p>
                                     </div>
-                                    
                                     <div class="grid grid-cols-2 gap-4 mb-4">
                                         <div class="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
                                             <p class="text-sm text-gray-600 dark:text-gray-400">Nuevo saldo:</p>
@@ -486,10 +563,6 @@ const recalcularSaldos = () => {
                                             </p>
                                         </div>
                                     </div>
-                                    
-                                    <p class="text-sm text-gray-500 dark:text-gray-400">
-                                        📅 ${flashData.fecha}
-                                    </p>
                                    </div>`,
                             icon: 'success',
                             confirmButtonText: 'Actualizar página',
@@ -499,20 +572,9 @@ const recalcularSaldos = () => {
                             router.reload({ preserveScroll: true });
                         });
                     } else if (successMessage) {
-                        // Mensaje simple de éxito
                         Swal.fire({
                             title: '¡Éxito!',
                             text: successMessage,
-                            icon: 'success',
-                            confirmButtonText: 'Actualizar'
-                        }).then(() => {
-                            router.reload({ preserveScroll: true });
-                        });
-                    } else {
-                        // Mensaje genérico
-                        Swal.fire({
-                            title: '¡Listo!',
-                            text: 'Saldos recalculados correctamente',
                             icon: 'success',
                             confirmButtonText: 'Actualizar'
                         }).then(() => {
@@ -522,13 +584,9 @@ const recalcularSaldos = () => {
                 },
                 onError: (errors) => {
                     let mensajeError = 'Ocurrió un error al recalcular los saldos';
-
-                    if (errors.error) {
-                        mensajeError = errors.error;
-                    } else if (errors.message) {
-                        mensajeError = errors.message;
-                    }
-
+                    if (errors.error) mensajeError = errors.error;
+                    else if (errors.message) mensajeError = errors.message;
+                    
                     Swal.fire({
                         title: 'Error',
                         html: `<div class="text-left">
@@ -585,16 +643,59 @@ const eliminarMovimiento = (id) => {
     });
 };
 
+// Toggle pendiente
+const togglePendiente = async (movimiento) => {
+    const nuevoEstado = !movimiento.es_pendiente;
+    
+    Swal.fire({
+        title: nuevoEstado ? 'Marcar como pendiente?' : 'Desmarcar pendiente?',
+        html: `<div class="text-left">
+                <p>Movimiento #${movimiento.numero}</p>
+                <p class="text-sm text-gray-600 mt-1">${movimiento.descripcion}</p>
+                <div class="mt-3 p-3 ${nuevoEstado ? 'bg-amber-50 dark:bg-amber-900/20' : 'bg-gray-50 dark:bg-gray-800'} rounded-lg">
+                    <p>${nuevoEstado ? '📌 Se marcará como PENDIENTE' : '✅ Se quitará el estado de pendiente'}</p>
+                </div>
+               </div>`,
+        icon: nuevoEstado ? 'question' : 'info',
+        showCancelButton: true,
+        confirmButtonText: nuevoEstado ? 'Sí, marcar' : 'Sí, quitar',
+        cancelButtonText: 'Cancelar',
+        confirmButtonColor: nuevoEstado ? '#f59e0b' : '#6b7280',
+    }).then(async (result) => {
+        if (result.isConfirmed) {
+            try {
+                const form = useForm({});
+                await form.post(`/movimientos/${movimiento.id}/toggle-pendiente`);
+                
+                Swal.fire({
+                    title: nuevoEstado ? '¡Marcado!' : '¡Actualizado!',
+                    text: nuevoEstado ? 'Movimiento marcado como pendiente' : 'Pendiente removido',
+                    icon: 'success',
+                    timer: 1500,
+                });
+                
+                // Recargar para ver cambios
+                router.reload({ preserveScroll: true });
+            } catch (error) {
+                Swal.fire({
+                    title: 'Error',
+                    text: 'No se pudo actualizar el estado',
+                    icon: 'error',
+                });
+            }
+        }
+    });
+};
+
 // Limpiar filtros
 const limpiarFiltros = () => {
     const hoy = new Date();
-    const primerDiaMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
-
-    filtroFechaDesde.value = primerDiaMes.toISOString().split('T')[0];
+    filtroFechaDesde.value = '2021-01-01';
     filtroFechaHasta.value = hoy.toISOString().split('T')[0];
     filtroDescripcion.value = "";
+    filtroFondo.value = "";
+    filtroSoloPendientes.value = false;
 };
-
 
 // Paleta de colores para badges
 const colorPalettes = [
@@ -604,19 +705,6 @@ const colorPalettes = [
     "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
     "bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-300",
     "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
-    "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300",
-    "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300",
-    "bg-lime-100 text-lime-800 dark:bg-lime-900/30 dark:text-lime-300",
-    "bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-300",
-    "bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-300",
-    "bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300",
-    "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300",
-    "bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300",
-    "bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900/30 dark:text-fuchsia-300",
-    "bg-pink-100 text-pink-800 dark:bg-pink-900/30 dark:text-pink-300",
-    "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
-    "bg-slate-100 text-slate-800 dark:bg-slate-900/30 dark:text-slate-300",
-    "bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300",
 ];
 
 const getBadgeColor = (name) => {

@@ -349,4 +349,9 @@ Route::post(
     [SubcuentaController::class, 'recalcularSaldos']
 )->name('subcuentas.recalcular');
 
+// Rutas para pendientes
+Route::post('/movimientos/{id}/toggle-pendiente', [MovimientoController::class, 'togglePendiente']);
+Route::get('/cuentas/{cuentaId}/pendientes-activos', [MovimientoController::class, 'pendientesActivos']);
+Route::post('/pendientes/{pendienteId}/saldar', [MovimientoController::class, 'saldarPendiente']);
+
 require __DIR__ . '/auth.php';
