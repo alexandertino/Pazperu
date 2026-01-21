@@ -20,10 +20,10 @@
                                 : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'">
                                 Saldo: S/ {{ formatoDinero(cuenta.saldo_actual) }}
                             </span>
-                            
+
                             <!-- Contador de pendientes -->
-                            <span :class="contarPendientesActivos() > 0 
-                                ? 'bg-amber-500 text-white animate-pulse' 
+                            <span :class="contarPendientesActivos() > 0
+                                ? 'bg-amber-500 text-white animate-pulse'
                                 : 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'"
                                 class="text-sm font-semibold px-3 py-1 rounded-full flex items-center gap-2">
                                 <span>⏳</span>
@@ -109,13 +109,13 @@
                 <!-- FILTRO DE ESTADO PENDIENTE -->
                 <div class="mt-4 flex flex-wrap items-center gap-4">
                     <div class="flex items-center">
-                        <input type="checkbox" id="filtroPendiente" v-model="filtroSoloPendientes" 
-                               class="h-4 w-4 text-amber-500 rounded border-gray-300 focus:ring-amber-500">
+                        <input type="checkbox" id="filtroPendiente" v-model="filtroSoloPendientes"
+                            class="h-4 w-4 text-amber-500 rounded border-gray-300 focus:ring-amber-500">
                         <label for="filtroPendiente" class="ml-2 text-sm text-gray-700 dark:text-gray-300">
                             Mostrar solo pendientes activos
                         </label>
                     </div>
-                    
+
                     <button @click="limpiarFiltros"
                         class="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600 rounded-md text-sm">
                         Limpiar Filtros
@@ -124,29 +124,34 @@
 
                 <!-- RESUMEN RÁPIDO -->
                 <div class="mt-4 pt-4 border-t dark:border-gray-700">
-                    <div class="flex flex-wrap gap-4 text-sm">
+                    <div class="flex flex-wrap items-center gap-4 text-sm">
+
                         <div>
                             <span class="text-gray-600 dark:text-gray-400">Movimientos: </span>
                             <span class="font-semibold">{{ movimientosFiltrados.length }}</span>
                         </div>
+
                         <div>
                             <span class="text-gray-600 dark:text-gray-400">Pendientes: </span>
                             <span class="font-semibold text-amber-600">
                                 {{ contarPendientesFiltrados() }}
                             </span>
                         </div>
+
                         <div>
                             <span class="text-gray-600 dark:text-gray-400">Débitos: </span>
                             <span class="font-semibold text-green-600">
                                 S/ {{ formatoDinero(resumenMovimientos.totalDeudor) }}
                             </span>
                         </div>
+
                         <div>
                             <span class="text-gray-600 dark:text-gray-400">Créditos: </span>
                             <span class="font-semibold text-red-600">
                                 S/ {{ formatoDinero(resumenMovimientos.totalAcreedor) }}
                             </span>
                         </div>
+
                         <div>
                             <span class="text-gray-600 dark:text-gray-400">Diferencia: </span>
                             <span class="font-semibold"
@@ -154,12 +159,28 @@
                                 S/ {{ formatoDinero(resumenMovimientos.diferencia) }}
                             </span>
                         </div>
+
+                        <!-- BOTÓN A LA DERECHA -->
+                        <div class="ml-auto">
+                            <button @click="ordenAscendente = !ordenAscendente" class="px-4 py-1.5 rounded-md 
+                       bg-indigo-50 dark:bg-indigo-900/30
+                       text-indigo-700 dark:text-indigo-300
+                       hover:bg-indigo-100 dark:hover:bg-indigo-900/50
+                       transition-colors font-medium text-sm 
+                       flex items-center gap-1.5">
+                                <span v-if="ordenAscendente">Recientes ↓</span>
+                                <span v-else>Antiguos ↑</span>
+                            </button>
+                        </div>
+
                     </div>
                 </div>
+
             </div>
 
             <!-- TABLA ÚNICA -->
-            <div class="overflow-x-auto max-h-[600px] shadow-lg rounded-lg border dark:border-gray-700">
+            <div
+                class="overflow-x-auto max-h-[600px] shadow-xl ring-1 ring-gray-200 dark:ring-gray-700 rounded-xl bg-white dark:bg-gray-900">
                 <table class="min-w-full text-sm text-left border dark:border-gray-700 bg-white dark:bg-gray-800">
                     <thead class="sticky top-0 z-10 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-100">
                         <tr>
@@ -176,47 +197,50 @@
                         </tr>
                     </thead>
                     <tbody>
-                        <tr v-for="mov in movimientosFiltrados" :key="mov.id"
-                            :class="[
-                                'border-t dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition',
-                                mov.es_pendiente && !mov.pendiente_saldado ? 'border-l-2 border-l-amber-500' : '',
-                                mov.es_pendiente && mov.pendiente_saldado ? 'border-l-2 border-l-green-500' : ''
-                            ]">
+                        <tr v-for="mov in movimientosFiltrados" :key="mov.id" :class="[
+                            'border-t dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition',
+                            mov.es_pendiente && !mov.pendiente_saldado ? 'border-l-2 border-l-amber-500' : '',
+                            mov.es_pendiente && mov.pendiente_saldado ? 'border-l-2 border-l-green-500' : ''
+                        ]">
 
                             <!-- CÍRCULO DE PENDIENTE - AL INICIO -->
                             <td class="p-3 text-center">
                                 <!-- Botón del círculo -->
                                 <button @click="togglePendiente(mov)"
                                     :title="mov.es_pendiente ? (mov.pendiente_saldado ? 'Pendiente saldado - Click para quitar' : 'Pendiente activo - Click para quitar') : 'Click para marcar como pendiente'"
-                                    :class="[
-                                        'w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-110',
-                                        mov.es_pendiente && !mov.pendiente_saldado 
-                                            ? 'bg-amber-500 hover:bg-amber-600 shadow-md' 
-                                            : mov.es_pendiente && mov.pendiente_saldado
-                                                ? 'bg-green-500 hover:bg-green-600 shadow'
-                                                : 'bg-transparent border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700'
-                                    ]"
-                                    class="relative group">
-                                    
+                                    :class="['w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-110',
+                                        mov.movimiento_pendiente_id
+                                            ? 'bg-green-500 hover:bg-green-600 shadow'
+                                            : mov.es_pendiente && !mov.pendiente_saldado
+                                                ? 'bg-amber-500 hover:bg-amber-600 shadow-md'
+                                                : mov.es_pendiente && mov.pendiente_saldado
+                                                    ? 'bg-green-500 hover:bg-green-600 shadow'
+                                                    : 'bg-transparent border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700'
+                                    ]" class="relative group">
+
                                     <!-- Icono dentro del círculo -->
-                                    <span class="text-white text-sm font-bold" 
-                                          v-if="mov.es_pendiente && !mov.pendiente_saldado">
+                                    <span class="text-white text-sm font-bold"
+                                        v-if="mov.es_pendiente && !mov.pendiente_saldado">
                                         P
                                     </span>
-                                    <span class="text-white text-sm font-bold" 
-                                          v-else-if="mov.es_pendiente && mov.pendiente_saldado">
+                                    <span class="text-white text-sm font-bold"
+                                        v-else-if="mov.es_pendiente && mov.pendiente_saldado">
                                         ✓
                                     </span>
                                     <span class="text-gray-400 text-sm" v-else>
                                         ○
                                     </span>
-                                    
+
                                     <!-- Tooltip flotante -->
-                                    <div class="absolute -top-8 left-1/2 transform -translate-x-1/2 hidden group-hover:block z-20">
-                                        <div class="bg-gray-900 text-white text-xs rounded-lg px-2 py-1 whitespace-nowrap shadow-xl">
+                                    <div
+                                        class="absolute -top-8 left-1/2 transform -translate-x-1/2 hidden group-hover:block z-20">
+                                        <div
+                                            class="bg-gray-900 text-white text-xs rounded-lg px-2 py-1 whitespace-nowrap shadow-xl">
                                             <div class="font-bold">
-                                                <span v-if="mov.es_pendiente && !mov.pendiente_saldado">⏳ PENDIENTE</span>
-                                                <span v-else-if="mov.es_pendiente && mov.pendiente_saldado">✅ SALDADO</span>
+                                                <span v-if="mov.es_pendiente && !mov.pendiente_saldado">⏳
+                                                    PENDIENTE</span>
+                                                <span v-else-if="mov.es_pendiente && mov.pendiente_saldado">✅
+                                                    SALDADO</span>
                                                 <span v-else>Marcar como pendiente</span>
                                             </div>
                                         </div>
@@ -229,8 +253,8 @@
                                 <div class="flex flex-col">
                                     <span>{{ mov.numero }}</span>
                                     <!-- Si salda un pendiente -->
-                                    <span v-if="mov.movimiento_pendiente_id" 
-                                          class="text-xs text-purple-600 dark:text-purple-400">
+                                    <span v-if="mov.movimiento_pendiente_id"
+                                        class="text-xs text-purple-600 dark:text-purple-400">
                                         → Salda #{{ obtenerNumeroPendiente(mov.movimiento_pendiente_id) }}
                                     </span>
                                 </div>
@@ -251,8 +275,8 @@
                                 <div class="font-medium text-gray-900 dark:text-gray-100">
                                     {{ mov.descripcion }}
                                     <!-- Si fue saldado -->
-                                    <div v-if="mov.movimiento_saldante_id" 
-                                         class="text-xs text-green-600 dark:text-green-400 mt-1 flex items-center gap-1">
+                                    <div v-if="mov.movimiento_saldante_id"
+                                        class="text-xs text-green-600 dark:text-green-400 mt-1 flex items-center gap-1">
                                         <span>✅</span>
                                         Saldado por #{{ obtenerNumeroSaldante(mov.movimiento_saldante_id) }}
                                     </div>
@@ -379,6 +403,7 @@ const filtroDescripcion = ref("");
 const filtroFondo = ref("");
 const filtroSoloPendientes = ref(false);
 const recalculando = ref(false);
+const ordenAscendente = ref(true)
 
 // Inicializar filtros
 onMounted(() => {
@@ -478,6 +503,11 @@ const movimientosFiltrados = computed(() => {
         filtrados = filtrados.filter(mov =>
             mov.subcuenta && mov.subcuenta.id == filtroFondo.value
         );
+    }
+
+    // ORDEN
+    if (!ordenAscendente.value) {
+        filtrados = filtrados.slice().reverse()
     }
 
     return filtrados;
@@ -586,7 +616,7 @@ const recalcularSaldos = () => {
                     let mensajeError = 'Ocurrió un error al recalcular los saldos';
                     if (errors.error) mensajeError = errors.error;
                     else if (errors.message) mensajeError = errors.message;
-                    
+
                     Swal.fire({
                         title: 'Error',
                         html: `<div class="text-left">
@@ -646,7 +676,7 @@ const eliminarMovimiento = (id) => {
 // Toggle pendiente
 const togglePendiente = async (movimiento) => {
     const nuevoEstado = !movimiento.es_pendiente;
-    
+
     Swal.fire({
         title: nuevoEstado ? 'Marcar como pendiente?' : 'Desmarcar pendiente?',
         html: `<div class="text-left">
@@ -666,14 +696,14 @@ const togglePendiente = async (movimiento) => {
             try {
                 const form = useForm({});
                 await form.post(`/movimientos/${movimiento.id}/toggle-pendiente`);
-                
+
                 Swal.fire({
                     title: nuevoEstado ? '¡Marcado!' : '¡Actualizado!',
                     text: nuevoEstado ? 'Movimiento marcado como pendiente' : 'Pendiente removido',
                     icon: 'success',
                     timer: 1500,
                 });
-                
+
                 // Recargar para ver cambios
                 router.reload({ preserveScroll: true });
             } catch (error) {

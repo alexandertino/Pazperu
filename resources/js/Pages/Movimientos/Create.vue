@@ -1,5 +1,6 @@
 <template>
     <AuthenticatedLayout>
+
         <Head title="Registrar Movimiento" />
 
         <div class="max-w-3xl mx-auto py-10 px-4 sm:px-6 lg:px-8">
@@ -26,8 +27,8 @@
             </div>
 
             <!-- BANNER DE PENDIENTES ACTIVOS -->
-            <div v-if="pendientesActivos.length > 0" 
-                 class="mb-6 p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+            <div v-if="pendientesActivos.length > 0"
+                class="mb-6 p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
                 <div class="flex items-center gap-3 mb-3">
                     <div class="text-amber-600 dark:text-amber-400 text-xl">⏳</div>
                     <div>
@@ -37,16 +38,14 @@
                         </p>
                     </div>
                 </div>
-                
+
                 <div class="space-y-2 max-h-48 overflow-y-auto">
-                    <div v-for="pendiente in pendientesActivos" :key="pendiente.id"
-                         :class="[
-                             'p-3 rounded border cursor-pointer transition',
-                             form.movimiento_pendiente_id == pendiente.id
-                                 ? 'bg-amber-100 dark:bg-amber-900/30 border-amber-300 dark:border-amber-700'
-                                 : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50'
-                         ]"
-                         @click="seleccionarPendiente(pendiente)">
+                    <div v-for="pendiente in pendientesActivos" :key="pendiente.id" :class="[
+                        'p-3 rounded border cursor-pointer transition',
+                        form.movimiento_pendiente_id == pendiente.id
+                            ? 'bg-amber-100 dark:bg-amber-900/30 border-amber-300 dark:border-amber-700'
+                            : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50'
+                    ]" @click="seleccionarPendiente(pendiente)">
                         <div class="flex justify-between items-start">
                             <div>
                                 <div class="flex items-center gap-2 mb-1">
@@ -54,26 +53,29 @@
                                         <span class="text-white text-xs font-bold">P</span>
                                     </div>
                                     <span class="font-medium">#{{ pendiente.numero }}</span>
-                                    <span class="text-xs text-gray-500">{{ formatFechaDisplay(pendiente.fecha_operacion) }}</span>
+                                    <span class="text-xs text-gray-500">{{ formatFechaDisplay(pendiente.fecha_operacion)
+                                        }}</span>
                                 </div>
                                 <p class="text-sm text-gray-700 dark:text-gray-300">{{ pendiente.descripcion }}</p>
                             </div>
                             <div class="text-right">
-                                <div class="font-bold" :class="pendiente.deudor > 0 ? 'text-green-600' : 'text-red-600'">
+                                <div class="font-bold"
+                                    :class="pendiente.deudor > 0 ? 'text-green-600' : 'text-red-600'">
                                     S/ {{ formatoDinero(Math.abs(pendiente.deudor - pendiente.acreedor)) }}
                                 </div>
-                                <div v-if="form.movimiento_pendiente_id == pendiente.id" 
-                                     class="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                                <div v-if="form.movimiento_pendiente_id == pendiente.id"
+                                    class="text-xs text-amber-600 dark:text-amber-400 mt-1">
                                     ✓ Seleccionado para pagar
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
-                
-                <div v-if="form.movimiento_pendiente_id" class="mt-4 pt-4 border-t border-amber-200 dark:border-amber-800">
-                    <button @click="form.movimiento_pendiente_id = null" 
-                            class="text-sm text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1">
+
+                <div v-if="form.movimiento_pendiente_id"
+                    class="mt-4 pt-4 border-t border-amber-200 dark:border-amber-800">
+                    <button @click="form.movimiento_pendiente_id = null"
+                        class="text-sm text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1">
                         ✕ Deseleccionar pendiente
                     </button>
                 </div>
@@ -82,9 +84,9 @@
             <form @submit.prevent="submit" class="space-y-6 bg-white dark:bg-gray-800 rounded-lg shadow p-6">
                 <!-- Checkbox para marcar como pendiente -->
                 <div class="flex items-center">
-                    <input type="checkbox" id="es_pendiente" v-model="form.es_pendiente" 
-                           :disabled="!!form.movimiento_pendiente_id"
-                           class="h-5 w-5 text-amber-500 rounded border-gray-300 focus:ring-amber-500">
+                    <input type="checkbox" id="es_pendiente" v-model="form.es_pendiente"
+                        :disabled="!!form.movimiento_pendiente_id"
+                        class="h-5 w-5 text-amber-500 rounded border-gray-300 focus:ring-amber-500">
                     <label for="es_pendiente" class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-300">
                         Marcar como movimiento pendiente
                     </label>
@@ -95,27 +97,31 @@
 
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Fecha</label>
-                    <input v-model="form.fecha_operacion" type="date" class="w-full border rounded px-3 py-2" required />
+                    <input v-model="form.fecha_operacion" type="date" class="w-full border rounded px-3 py-2"
+                        required />
                 </div>
 
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Subcuenta (opcional)</label>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Subcuenta
+                        (opcional)</label>
                     <select v-model="form.subcuenta_id" class="w-full border rounded px-3 py-2">
                         <option value="">Seleccionar subcuenta</option>
                         <option v-for="s in cuenta.subcuentas" :key="s.id" :value="s.id">
-                            {{ s.nombre }} 
+                            {{ s.nombre }}
                         </option>
                     </select>
                 </div>
 
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Medio de pago</label>
-                    <input v-model="form.medio_pago" type="text" placeholder="Ej: 003, Transferencia, Efectivo" class="w-full border rounded px-3 py-2" />
+                    <input v-model="form.medio_pago" type="text" placeholder="Ej: 003, Transferencia, Efectivo"
+                        class="w-full border rounded px-3 py-2" />
                 </div>
 
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Descripción</label>
-                    <textarea v-model="form.descripcion" rows="3" class="w-full border rounded px-3 py-2" required></textarea>
+                    <textarea v-model="form.descripcion" rows="3" class="w-full border rounded px-3 py-2"
+                        required></textarea>
                     <p v-if="form.movimiento_pendiente_id" class="text-xs text-gray-500 dark:text-gray-400 mt-1">
                         Sugerencia: "Pago de pendiente #{{ form.movimiento_pendiente_id }}" o similar
                     </p>
@@ -123,21 +129,23 @@
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Débito (Ingreso)</label>
-                        <input v-model="form.deudor" @input="onDeudorInput" type="number" step="0.01" placeholder="0.00" 
-                               class="w-full border rounded px-3 py-2" />
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Débito
+                            (Ingreso)</label>
+                        <input v-model="form.deudor" @input="onDeudorInput" type="number" step="0.01" placeholder="0.00"
+                            class="w-full border rounded px-3 py-2" />
                     </div>
 
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Crédito (Egreso)</label>
-                        <input v-model="form.acreedor" @input="onAcreedorInput" type="number" step="0.01" placeholder="0.00" 
-                               class="w-full border rounded px-3 py-2" />
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Crédito
+                            (Egreso)</label>
+                        <input v-model="form.acreedor" @input="onAcreedorInput" type="number" step="0.01"
+                            placeholder="0.00" class="w-full border rounded px-3 py-2" />
                     </div>
                 </div>
 
                 <!-- INFO DEL PENDIENTE SELECCIONADO -->
-                <div v-if="form.movimiento_pendiente_id && pendienteSeleccionado" 
-                     class="p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
+                <div v-if="form.movimiento_pendiente_id && pendienteSeleccionado"
+                    class="p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
                     <div class="flex items-center gap-3 mb-3">
                         <div class="text-green-600 dark:text-green-400 text-xl">💰</div>
                         <div>
@@ -147,7 +155,7 @@
                             </p>
                         </div>
                     </div>
-                    
+
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                         <div>
                             <span class="text-gray-600 dark:text-gray-400">Pendiente:</span>
@@ -159,8 +167,10 @@
                         </div>
                         <div>
                             <span class="text-gray-600 dark:text-gray-400">Monto pendiente:</span>
-                            <span class="font-bold ml-2" :class="pendienteSeleccionado.deudor > 0 ? 'text-green-600' : 'text-red-600'">
-                                S/ {{ formatoDinero(Math.abs(pendienteSeleccionado.deudor - pendienteSeleccionado.acreedor)) }}
+                            <span class="font-bold ml-2"
+                                :class="pendienteSeleccionado.deudor > 0 ? 'text-green-600' : 'text-red-600'">
+                                S/ {{ formatoDinero(Math.abs(pendienteSeleccionado.deudor -
+                                pendienteSeleccionado.acreedor)) }}
                             </span>
                         </div>
                         <div>
@@ -171,16 +181,17 @@
                 </div>
 
                 <div class="flex justify-between items-center pt-6 border-t">
-                    <Link :href="`/cuentas/${cuenta.id}`" class="text-gray-600 hover:underline">← Volver a la cuenta</Link>
-                    
+                    <Link :href="`/cuentas/${cuenta.id}`" class="text-gray-600 hover:underline">← Volver a la cuenta
+                    </Link>
+
                     <div class="flex gap-3">
-                        <button type="button" @click="resetForm" 
-                                class="px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700">
+                        <button type="button" @click="resetForm"
+                            class="px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700">
                             Limpiar
                         </button>
-                        
-                        <button class="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition" 
-                                :disabled="form.processing || enviando">
+
+                        <button class="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition"
+                            :disabled="form.processing || enviando">
                             <span v-if="form.processing">Guardando...</span>
                             <span v-else-if="form.movimiento_pendiente_id">💸 Pagar Pendiente</span>
                             <span v-else>💾 Guardar Movimiento</span>
@@ -276,12 +287,12 @@ function seleccionarPendiente(pendiente) {
     } else {
         form.movimiento_pendiente_id = pendiente.id;
         form.es_pendiente = false; // No puede ser pendiente si paga otro
-        
+
         // Sugerir descripción automática
         if (!form.descripcion.trim()) {
             form.descripcion = `Pago de pendiente #${pendiente.numero} - ${pendiente.descripcion}`;
         }
-        
+
         // Sugerir montos inversos al pendiente
         if (!form.deudor && !form.acreedor) {
             if (pendiente.deudor > 0) {
@@ -342,11 +353,11 @@ async function validarAntesDeEnviar() {
             Swal.fire("Pendiente no encontrado", "El pendiente seleccionado ya no existe.", "error");
             return false;
         }
-        
+
         // Verificar que el monto coincida (no obligatorio pero sugerido)
         const montoPendiente = Math.abs(pendiente.deudor - pendiente.acreedor);
         const montoMovimiento = Math.abs(d - a);
-        
+
         if (montoMovimiento !== montoPendiente) {
             const confirm = await Swal.fire({
                 title: "Montos diferentes",
@@ -362,7 +373,7 @@ async function validarAntesDeEnviar() {
                 confirmButtonText: "Sí, continuar",
                 cancelButtonText: "Corregir monto",
             });
-            
+
             if (!confirm.isConfirmed) return false;
         }
     }
@@ -393,14 +404,14 @@ function resetForm() {
 // Submit
 async function submit() {
     if (enviando.value) return;
-    
+
     const isValid = await validarAntesDeEnviar(); // Ahora puede usar await
     if (!isValid) return;
 
     // Preparar confirmación según tipo
     let confirmMessage = "";
     let confirmTitle = "";
-    
+
     if (form.movimiento_pendiente_id) {
         const pendiente = pendienteSeleccionado.value;
         confirmTitle = "¿Pagar pendiente?";
@@ -455,7 +466,7 @@ async function submit() {
 
     try {
         const response = await axios.post("/movimientos", form.data());
-        
+
         let successMessage = "";
         if (form.movimiento_pendiente_id) {
             successMessage = `✅ Pendiente #${pendienteSeleccionado.value.numero} saldado correctamente`;
@@ -473,19 +484,22 @@ async function submit() {
             showConfirmButton: false,
         });
 
-        router.visit(`/cuentas/${form.cuenta_general_id}`);
+        setTimeout(() => {
+            window.location.reload();
+        }, 1500);
+
 
     } catch (error) {
         console.error("Error:", error);
         let errorMessage = "Hubo un problema al guardar.";
-        
+
         if (error.response?.data?.message) {
             errorMessage = error.response.data.message;
         } else if (error.response?.data?.errors) {
             const errors = Object.values(error.response.data.errors).flat();
             errorMessage = errors.join("<br>");
         }
-        
+
         Swal.fire({
             title: "Error",
             html: errorMessage,
