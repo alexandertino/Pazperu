@@ -117,6 +117,7 @@ const diferenciaTotales = computed(() => {
 
 <template>
     <AuthenticatedLayout>
+
         <Head :title="`Fondo - ${subcuenta.nombre}`" />
 
         <div class="p-8 flex justify-center">
@@ -172,25 +173,17 @@ const diferenciaTotales = computed(() => {
                             Filtrar por mes:
                         </label>
 
-                        <input
-                            v-model="mesSeleccionado"
-                            type="month"
-                            class="px-3 py-2 border rounded dark:bg-gray-800 dark:border-gray-600 dark:text-gray-200"
-                        />
+                        <input v-model="mesSeleccionado" type="month"
+                            class="px-3 py-2 border rounded dark:bg-gray-800 dark:border-gray-600 dark:text-gray-200" />
 
-                        <button
-                            v-if="mesSeleccionado"
-                            @click="mesSeleccionado = ''"
-                            class="px-3 py-2 text-sm bg-gray-500 text-white rounded hover:bg-gray-600"
-                        >
+                        <button v-if="mesSeleccionado" @click="mesSeleccionado = ''"
+                            class="px-3 py-2 text-sm bg-gray-500 text-white rounded hover:bg-gray-600">
                             Limpiar filtro
                         </button>
                     </div>
 
-                    <button
-                        @click="ordenInvertido = !ordenInvertido"
-                        class="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700"
-                    >
+                    <button @click="ordenInvertido = !ordenInvertido"
+                        class="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700">
                         {{ ordenInvertido ? "Orden normal" : "Invertir orden" }}
                     </button>
                 </div>
@@ -211,11 +204,8 @@ const diferenciaTotales = computed(() => {
                         </thead>
 
                         <tbody>
-                            <tr
-                                v-for="m in movimientosOrdenados"
-                                :key="m.id"
-                                class="border dark:border-gray-700 bg-white dark:bg-gray-800"
-                            >
+                            <tr v-for="m in movimientosOrdenados" :key="m.id"
+                                class="border dark:border-gray-700 bg-white dark:bg-gray-800">
                                 <td class="p-2 text-center text-gray-600 dark:text-gray-400">
                                     {{ m.numero_principal }}
                                 </td>
@@ -226,12 +216,42 @@ const diferenciaTotales = computed(() => {
 
                                 <td class="p-2 text-center">{{ m.fecha }}</td>
 
-                                <td
-                                    class="p-2 font-semibold"
-                                    :class="m.numero_fondo === 0 ? 'text-purple-700 dark:text-purple-300' : ''"
-                                >
-                                    {{ m.descripcion }}
+                                <td class="p-2 font-semibold relative group align-middle"
+                                    :class="{ 'text-purple-700 dark:text-purple-300': m.numero_fondo === 0 }">
+                                    <div class="flex items-center gap-2">
+                                        <!-- Descripción -->
+                                        <span class="truncate max-w-[180px]">
+                                            {{ m.descripcion }}
+                                        </span>
+
+                                        <!-- Ícono comentario -->
+                                        <span v-if="m.comentario" class="text-red-500 cursor-help" aria-hidden="true">
+                                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fill-rule="evenodd"
+                                                    d="M18 13V5a2 2 0 00-2-2H4a2 2 0 00-2 2v8a2 2 0 002 2h3l3 3 3-3h3a2 2 0 002-2zM5 7a1 1 0 011-1h8a1 1 0 110 2H6a1 1 0 01-1-1zm1 3a1 1 0 100 2h3a1 1 0 100-2H6z"
+                                                    clip-rule="evenodd" />
+                                            </svg>
+                                        </span>
+                                    </div>
+
+                                    <!-- Tooltip comentario -->
+                                    <div v-if="m.comentario" class="absolute z-50 hidden group-hover:block
+                                            left-1/2 -translate-x-1/2 top-full mt-1
+                                            w-80 max-w-[90vw]
+                                            bg-gray-900 text-white text-sm
+                                            rounded-lg shadow-lg p-4
+                                            border border-gray-700">
+                                        <div class="font-semibold text-xs text-red-400 mb-2">
+                                            Comentario
+                                        </div>
+
+                                        <div class="whitespace-pre-wrap max-h-32 overflow-y-auto">
+                                            {{ m.comentario }}
+                                        </div>
+                                    </div>
                                 </td>
+
+
 
                                 <td class="p-2 text-right text-green-600 dark:text-green-400">
                                     <span v-if="Number(m.deudor) > 0">
@@ -277,10 +297,8 @@ const diferenciaTotales = computed(() => {
                             <div class="pt-2 border-t dark:border-gray-700">
                                 <div class="flex justify-between items-center">
                                     <span class="font-semibold text-gray-700 dark:text-gray-300">Diferencia:</span>
-                                    <span 
-                                        class="font-bold"
-                                        :class="diferenciaTotales >= 0 ? 'text-green-600 dark:text-green-400' : 'text-orange-600 dark:text-orange-400'"
-                                    >
+                                    <span class="font-bold"
+                                        :class="diferenciaTotales >= 0 ? 'text-green-600 dark:text-green-400' : 'text-orange-600 dark:text-orange-400'">
                                         S/ {{ formatoDinero(diferenciaTotales) }}
                                     </span>
                                 </div>

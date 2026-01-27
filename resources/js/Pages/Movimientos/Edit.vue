@@ -213,6 +213,29 @@
                         </div>
                     </div>
                 </div>
+                <!-- BOTÓN COMENTARIO -->
+                <div>
+                    <button
+                        type="button"
+                        @click="mostrarComentario = !mostrarComentario"
+                        class="text-sm text-blue-600 hover:underline dark:text-blue-400"
+                    >
+                        {{ mostrarComentario ? 'Ocultar comentario' : '➕ Agregar comentario' }}
+                    </button>
+                </div>
+
+                <!-- COMENTARIO -->
+                <div v-if="mostrarComentario">
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Comentario (opcional)
+                    </label>
+                    <textarea
+                        v-model="form.comentario"
+                        rows="3"
+                        class="w-full border rounded px-3 py-2 dark:bg-gray-700 dark:text-white"
+                        placeholder="Comentario interno, notas adicionales, observaciones..."
+                    ></textarea>
+                </div>
 
                 <!-- BOTONES -->
                 <div class="flex justify-between items-center pt-6 border-t dark:border-gray-700">
@@ -268,12 +291,13 @@ const formatFecha = (f) => {
     if (!f) return "";
     return new Date(f).toISOString().split("T")[0];
 };
+const mostrarComentario = ref(!!props.movimiento.comentario);
 
-// --- Valores iniciales del formulario ---
 const form = useForm({
     fecha_operacion: formatFecha(props.movimiento.fecha_operacion),
     medio_pago: props.movimiento.medio_pago,
     descripcion: props.movimiento.descripcion,
+    comentario: props.movimiento.comentario || "",
     deudor: props.movimiento.deudor,
     acreedor: props.movimiento.acreedor,
     subcuenta_id: props.movimiento.subcuenta_id,

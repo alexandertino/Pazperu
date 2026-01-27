@@ -14,6 +14,7 @@ class Movimiento extends Model
         'fecha_operacion',
         'medio_pago',
         'descripcion',
+        'comentario',
         'deudor',
         'acreedor',
         'saldo',
@@ -23,6 +24,7 @@ class Movimiento extends Model
         'movimiento_saldante_id',
         'movimiento_pendiente_id',
     ];
+
 
     protected $casts = [
         'fecha_operacion' => 'date',

@@ -107,6 +107,7 @@ class MovimientoController extends Controller
             'cuenta_general_id' => 'required|integer|exists:cuentas_generales,id',
             'fecha_operacion'   => 'required|date',
             'descripcion'       => 'required|string',
+            'comentario'        => 'nullable|string',
             'deudor'            => 'nullable|numeric',
             'acreedor'          => 'nullable|numeric',
             'medio_pago'        => 'nullable|string|max:50',
@@ -114,6 +115,7 @@ class MovimientoController extends Controller
             'es_pendiente'      => 'nullable|boolean',
             'movimiento_pendiente_id' => 'nullable|integer|exists:movimientos,id',
         ]);
+
 
         return DB::transaction(function () use ($request) {
             $deudor = $request->deudor === null ? 0 : floatval($request->deudor);
@@ -149,6 +151,7 @@ class MovimientoController extends Controller
                 'numero'            => $nuevoNumero,
                 'fecha_operacion'   => $request->fecha_operacion,
                 'descripcion'       => $request->descripcion,
+                'comentario'        => $request->comentario,
                 'deudor'            => $deudor,
                 'acreedor'          => $acreedor,
                 'saldo'             => 0,
@@ -158,6 +161,7 @@ class MovimientoController extends Controller
                 'pendiente_saldado' => false,
                 'movimiento_pendiente_id' => $movimientoPendienteId,
             ]);
+
 
             // 3. Si este movimiento salda un pendiente, actualizar el pendiente
             if ($movimientoPendienteId) {
@@ -221,6 +225,7 @@ class MovimientoController extends Controller
             'fecha_operacion' => 'required|date',
             'medio_pago' => 'nullable|string',
             'descripcion' => 'required|string',
+            'comentario' => 'nullable|string',
             'deudor' => 'nullable|numeric',
             'acreedor' => 'nullable|numeric',
             'subcuenta_id' => 'nullable|exists:subcuentas,id',
