@@ -3,7 +3,8 @@
 
         <Head :title="`Libro - ${cuenta.nombre}`" />
 
-        <div class="py-8 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="py-8 max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
+
             <!-- HEADER -->
             <div class="mb-8">
                 <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
@@ -181,7 +182,7 @@
             <!-- TABLA ÚNICA -->
             <div
                 class="overflow-x-auto max-h-[600px] shadow-xl ring-1 ring-gray-200 dark:ring-gray-700 rounded-xl bg-white dark:bg-gray-900">
-                <table class="min-w-full text-sm text-left border dark:border-gray-700 bg-white dark:bg-gray-800">
+                <table class="min-w-[110px] text-sm text-left border dark:border-gray-700 bg-white dark:bg-gray-800">
                     <thead class="sticky top-0 z-10 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-100">
                         <tr>
                             <th class="p-3 w-12 text-center">●</th> <!-- Columna para el círculo -->
@@ -190,9 +191,9 @@
                             <th class="p-3">Medio Pago</th>
                             <th class="p-3">Descripción</th>
                             <th class="p-3">Fondo</th>
-                            <th class="p-3 text-right">Deudor</th>
-                            <th class="p-3 text-right">Acreedor</th>
-                            <th class="p-3 text-right">Saldo</th>
+                            <th class="p-3">Deudor</th>
+                            <th class="p-3">Acreedor</th>
+                            <th class="p-3">Saldo</th>
                             <th class="p-3">Acciones</th>
                         </tr>
                     </thead>
@@ -271,14 +272,51 @@
                             </td>
 
                             <!-- Descripción -->
-                            <td class="p-3">
+                            <td class="p-3 relative group align-top">
                                 <div class="font-medium text-gray-900 dark:text-gray-100">
-                                    {{ mov.descripcion }}
-                                    <!-- Si fue saldado -->
-                                    <div v-if="mov.movimiento_saldante_id"
-                                        class="text-xs text-green-600 dark:text-green-400 mt-1 flex items-center gap-1">
-                                        <span>✅</span>
-                                        Saldado por #{{ obtenerNumeroSaldante(mov.movimiento_saldante_id) }}
+                                    <div class="flex items-start gap-2">
+                                        <!-- Descripción -->
+                                        <span class="block max-w-md whitespace-normal break-words">
+                                            {{ mov.descripcion }}
+                                        </span>
+
+                                        <!-- Ícono comentario -->
+                                        <span
+                                            v-if="mov.comentario"
+                                            class="mt-1 text-red-500 cursor-help flex-shrink-0"
+                                            aria-hidden="true"
+                                        >
+                                            <svg
+                                                class="w-5 h-5"
+                                                fill="currentColor"
+                                                viewBox="0 0 20 20"
+                                            >
+                                                <path
+                                                    fill-rule="evenodd"
+                                                    d="M18 13V5a2 2 0 00-2-2H4a2 2 0 00-2 2v8a2 2 0 002 2h3l3 3 3-3h3a2 2 0 002-2zM5 7a1 1 0 011-1h8a1 1 0 110 2H6a1 1 0 01-1-1zm1 3a1 1 0 100 2h3a1 1 0 100-2H6z"
+                                                    clip-rule="evenodd"
+                                                />
+                                            </svg>
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <!-- Tooltip comentario -->
+                                <div
+                                    v-if="mov.comentario"
+                                    class="absolute z-50 hidden group-hover:block
+                                        left-1/2 -translate-x-1/2 top-full mt-2
+                                        w-80 max-w-[90vw]
+                                        bg-gray-900 text-white text-sm
+                                        rounded-lg shadow-lg p-4
+                                        border border-gray-700"
+                                >
+                                    <div class="font-semibold text-xs text-red-400 mb-2">
+                                        Comentario
+                                    </div>
+
+                                    <div class="whitespace-pre-wrap max-h-32 overflow-y-auto">
+                                        {{ mov.comentario }}
                                     </div>
                                 </div>
                             </td>
@@ -320,16 +358,23 @@
 
                             <!-- Acciones -->
                             <td class="p-3">
-                                <div class="flex gap-1">
+                                <div class="flex items-center gap-2">
                                     <Link :href="`/movimientos/${mov.id}/edit`"
                                         class="flex items-center justify-center w-8 h-8 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition"
                                         title="Editar">
                                         ✏️
                                     </Link>
+
                                     <button @click="eliminarMovimiento(mov.id)"
                                         class="flex items-center justify-center w-8 h-8 bg-red-500 text-white rounded-lg hover:bg-red-600 transition"
                                         title="Eliminar">
                                         🗑️
+                                    </button>
+
+                                    <button @click="dividirMovimiento(mov)"
+                                        class="flex items-center justify-center w-8 h-8 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition"
+                                        title="Dividir movimiento">
+                                        ✂️
                                     </button>
                                 </div>
                             </td>
@@ -405,12 +450,21 @@ const filtroSoloPendientes = ref(false);
 const recalculando = ref(false);
 const ordenAscendente = ref(true)
 
-// Inicializar filtros
+// Inicializar fil
+
 onMounted(() => {
-    const hoy = new Date();
-    filtroFechaDesde.value = '2021-01-01';
-    filtroFechaHasta.value = hoy.toISOString().split('T')[0];
-});
+    console.log('MOVIMIENTOS:', props.movimientos)
+
+    props.movimientos.forEach((m, i) => {
+        console.log(`Movimiento ${i}`, {
+            id: m.id,
+            comentario: m.comentario,
+            tipo: typeof m.comentario,
+            length: m.comentario ? m.comentario.length : 0
+        })
+    })
+})
+
 
 // Contar pendientes activos
 const contarPendientesActivos = () => {
@@ -761,4 +815,99 @@ watch([filtroFechaDesde, filtroFechaHasta], ([desde, hasta]) => {
         filtroFechaDesde.value = "";
     }
 });
+
+
+const dividirMovimiento = (mov) => {
+    const montoTotal =
+        parseFloat(mov.deudor || 0) + parseFloat(mov.acreedor || 0);
+
+    if (montoTotal <= 0) {
+        Swal.fire('Error', 'Este movimiento no tiene monto válido', 'error');
+        return;
+    }
+
+    Swal.fire({
+        title: `Dividir movimiento #${mov.numero}`,
+        html: `
+            <div class="text-left space-y-3">
+                <p><strong>Total:</strong> S/ ${formatoDinero(montoTotal)}</p>
+
+                <div>
+                    <label class="text-sm">Monto primera fila</label>
+                    <input id="monto1" type="number" step="0.01"
+                        class="swal2-input"
+                        value="${montoTotal}"
+                    />
+                </div>
+
+                <div>
+                    <label class="text-sm">Monto segunda fila</label>
+                    <input id="monto2" type="number" step="0.01"
+                        class="swal2-input"
+                        value="0"
+                        readonly
+                    />
+                </div>
+            </div>
+        `,
+        didOpen: () => {
+            const input1 = document.getElementById('monto1');
+            const input2 = document.getElementById('monto2');
+
+            input1.addEventListener('input', () => {
+                const val1 = parseFloat(input1.value) || 0;
+                input2.value = (montoTotal - val1).toFixed(2);
+            });
+        },
+        showCancelButton: true,
+        confirmButtonText: 'Dividir',
+        cancelButtonText: 'Cancelar',
+        confirmButtonColor: '#7c3aed',
+        preConfirm: () => {
+            const monto1 = parseFloat(document.getElementById('monto1').value);
+            const monto2 = parseFloat(document.getElementById('monto2').value);
+
+            if (monto1 <= 0 || monto2 <= 0) {
+                Swal.showValidationMessage(
+                    'Ambos montos deben ser mayores a 0'
+                );
+                return false;
+            }
+
+            if (monto1 + monto2 !== montoTotal) {
+                Swal.showValidationMessage(
+                    'La suma no coincide con el total'
+                );
+                return false;
+            }
+
+            return { monto1, monto2 };
+        }
+    }).then((result) => {
+        if (!result.isConfirmed) return;
+
+        useForm({
+            monto_primero: result.value.monto1,
+            monto_segundo: result.value.monto2,
+        }).post(`/movimientos/${mov.id}/dividir`, {
+            preserveScroll: true,
+            onSuccess: () => {
+                Swal.fire(
+                    'Listo',
+                    'Movimiento dividido correctamente',
+                    'success'
+                );
+                router.reload({ preserveScroll: true });
+            },
+            onError: () => {
+                Swal.fire(
+                    'Error',
+                    'No se pudo dividir el movimiento',
+                    'error'
+                );
+            }
+        });
+    });
+};
+
 </script>

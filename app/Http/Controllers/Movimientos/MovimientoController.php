@@ -519,4 +519,77 @@ class MovimientoController extends Controller
             'saldo_final' => $saldoFinal
         ]);
     }
+
+    public function dividirMovimiento(Request $request, $id)
+{
+    $request->validate([
+        'monto_primero' => 'required|numeric|min:0.01',
+        'monto_segundo' => 'required|numeric|min:0.01',
+    ]);
+
+    return DB::transaction(function () use ($request, $id) {
+        $mov = Movimiento::findOrFail($id);
+
+        $total = $request->monto_primero + $request->monto_segundo;
+
+        // Detectar si es deudor o acreedor
+        if ($mov->deudor > 0) {
+            if ($mov->deudor != $total) {
+                throw new \Exception('Los montos no coinciden con el total del movimiento.');
+            }
+            $campo = 'deudor';
+        } elseif ($mov->acreedor > 0) {
+            if ($mov->acreedor != $total) {
+                throw new \Exception('Los montos no coinciden con el total del movimiento.');
+            }
+            $campo = 'acreedor';
+        } else {
+            throw new \Exception('El movimiento no tiene monto válido.');
+        }
+
+        // 1️⃣ Actualizar movimiento original (141)
+        $mov->update([
+            'deudor'   => $campo === 'deudor' ? $request->monto_primero : 0,
+            'acreedor' => $campo === 'acreedor' ? $request->monto_primero : 0,
+        ]);
+
+        // 2️⃣ Desplazar los movimientos siguientes
+        Movimiento::where('cuenta_general_id', $mov->cuenta_general_id)
+            ->where('numero', '>', $mov->numero)
+            ->orderBy('numero', 'desc')
+            ->lockForUpdate()
+            ->each(function ($m) {
+                $m->increment('numero');
+            });
+
+        // 3️⃣ Crear nuevo movimiento (142)
+        Movimiento::create([
+            'cuenta_general_id' => $mov->cuenta_general_id,
+            'numero'            => $mov->numero + 1,
+            'fecha_operacion'   => $mov->fecha_operacion,
+            'descripcion'       => $mov->descripcion,
+            'comentario'        => $mov->comentario,
+            'deudor'            => $campo === 'deudor' ? $request->monto_segundo : 0,
+            'acreedor'          => $campo === 'acreedor' ? $request->monto_segundo : 0,
+            'saldo'             => 0,
+            'medio_pago'        => $mov->medio_pago,
+            'subcuenta_id'      => $mov->subcuenta_id,
+            'es_pendiente'      => false,
+        ]);
+
+        // 4️⃣ Recalcular
+        SaldosService::recalcularCuenta($mov->cuenta_general_id);
+
+        if ($mov->subcuenta_id) {
+            SaldosService::recalcularSubcuenta($mov->subcuenta_id);
+        }
+
+        return redirect()->back()->with(
+            'success',
+            'Movimiento dividido correctamente'
+        );
+    });
+    }
+
+
 }

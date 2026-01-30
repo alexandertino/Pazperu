@@ -354,4 +354,10 @@ Route::post('/movimientos/{id}/toggle-pendiente', [MovimientoController::class, 
 Route::get('/cuentas/{cuentaId}/pendientes-activos', [MovimientoController::class, 'pendientesActivos']);
 Route::post('/pendientes/{pendienteId}/saldar', [MovimientoController::class, 'saldarPendiente']);
 
+Route::post(
+    '/movimientos/{id}/dividir',
+    [MovimientoController::class, 'dividirMovimiento']
+)->name('movimientos.dividir');
+
+
 require __DIR__ . '/auth.php';

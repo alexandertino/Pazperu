@@ -46,6 +46,7 @@ class CuentaGeneralController extends Controller
                     'fecha_operacion' => $movimiento->fecha_operacion,
                     'medio_pago' => $movimiento->medio_pago,
                     'descripcion' => $movimiento->descripcion,
+                    'comentario' => $movimiento->comentario,
                     'deudor' => floatval($movimiento->deudor ?? 0),
                     'acreedor' => floatval($movimiento->acreedor ?? 0),
                     'saldo' => $saldo,
