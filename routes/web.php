@@ -242,8 +242,8 @@ Route::get('proyectos/{proyecto}/inventario-salidas', [InventarioSalidaControlle
 
     Route::middleware(['auth'])->group(function () {
         // Recalcular saldos (POST)
-        Route::post('/proyectos/{proyecto}/am/recalcular', [AmMovimientoController::class, 'recalcular'])
-            ->name('proyectos.am.recalcular');
+        Route::post('/proyectos/{proyecto}/recalcular', [AmMovimientoController::class, 'recalcular'])
+            ->name('proyectos.recalcular');
     });
     // batch: devuelve vinculaciones para varios am_row_id
     Route::get('/proyectos/{proyecto}/vinculaciones/batch', [VinculacionController::class, 'batch'])

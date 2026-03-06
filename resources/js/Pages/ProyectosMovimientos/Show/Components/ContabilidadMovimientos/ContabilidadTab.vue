@@ -5,6 +5,7 @@ import CajaTable from './CajaTable.vue';
 import BancoTable from './BancoTable.vue';
 import EasyTable from './EasyTable.vue';
 import ContabilidadFilters from './ContabilidadFilters.vue';
+import Swal from "sweetalert2";
 
 const props = defineProps({
     proyecto: Object,
@@ -80,54 +81,120 @@ const exportarExcel = () => {
     window.location.href = url;
 };
 
-// Funciones para recalcular
 const recalcularCaja = async () => {
-    if (!confirm('¿Recalcular saldos de Caja? Esto puede tomar unos momentos.')) return;
-    
+
+    const confirm = await Swal.fire({
+        title: 'Recalcular saldos',
+        text: 'Se recalcularán los movimientos de caja',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: 'Sí, recalcular',
+        cancelButtonText: 'Cancelar'
+    });
+
+    if (!confirm.isConfirmed) return;
+
     try {
-        const response = await fetch(`/proyectos/${props.proyecto.id}/am/recalcular`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ tabla: 'caja' })
+
+        const nombreTabla = props.proyecto.nombre
+            .toLowerCase()
+            .replace(/\s+/g, '_');
+
+        await axios.post(`/proyectos/${props.proyecto.id}/recalcular`, {
+            tabla: `am_caja_proyecto_${nombreTabla}`
         });
-        
-        if (response.ok) {
-            alert('Caja recalculada correctamente');
-            router.reload();
-        } else {
-            alert('Error al recalcular caja');
-        }
+
+        await Swal.fire(
+            'Correcto',
+            'Saldos recalculados correctamente',
+            'success'
+        );
+
+        router.reload();
+
     } catch (error) {
-        console.error('Error:', error);
-        alert('Error al recalcular caja');
+
+        console.error(error.response?.data);
+
+        Swal.fire(
+            'Error',
+            error.response?.data?.message || 'No se pudo recalcular',
+            'error'
+        );
     }
 };
 
 const recalcularBanco = async () => {
-    if (!confirm('¿Recalcular saldos de Banco? Esto puede tomar unos momentos.')) return;
-    
+
+    const confirm = await Swal.fire({
+        title: 'Recalcular saldos',
+        text: 'Se recalcularán los movimientos de banco',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: 'Sí, recalcular',
+        cancelButtonText: 'Cancelar'
+    });
+
+    if (!confirm.isConfirmed) return;
+
     try {
-        const response = await fetch(`/proyectos/${props.proyecto.id}/am/recalcular`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ tabla: 'banco' })
+
+        const nombreTabla = props.proyecto.nombre
+            .toLowerCase()
+            .replace(/\s+/g, '_');
+
+        await axios.post(`/proyectos/${props.proyecto.id}/recalcular`, {
+            tabla: `am_banco_proyecto_${nombreTabla}`
         });
-        
-        if (response.ok) {
-            alert('Banco recalculado correctamente');
-            router.reload();
-        } else {
-            alert('Error al recalcular banco');
-        }
+
+        await Swal.fire(
+            'Correcto',
+            'Saldos de banco recalculados correctamente',
+            'success'
+        );
+
+        router.reload();
+
     } catch (error) {
-        console.error('Error:', error);
-        alert('Error al recalcular banco');
+
+        console.error(error.response?.data);
+
+        Swal.fire(
+            'Error',
+            'No se pudo recalcular banco',
+            'error'
+        );
     }
 };
+
+const saldoAperturaCaja = computed(() => {
+
+    if (!props.caja || props.caja.length === 0) return 0;
+
+    const mesAnterior = mesActivo.value === 1 ? 12 : mesActivo.value - 1;
+    const anioAnterior = mesActivo.value === 1 
+        ? anioActivo.value - 1 
+        : anioActivo.value;
+
+    const movimientosMesAnterior = props.caja
+        .filter(item => {
+            if (!item.fecha) return false;
+
+            const mes = parseInt(item.fecha.substring(5,7));
+            const anio = parseInt(item.fecha.substring(0,4));
+
+            return mes === mesAnterior && anio === anioAnterior;
+        })
+        .sort((a,b) => a.fecha.localeCompare(b.fecha));
+
+    if (movimientosMesAnterior.length === 0) return 0;
+
+    const ultimo = movimientosMesAnterior[movimientosMesAnterior.length - 1];
+
+    return parseFloat(ultimo.saldo) || 0;
+
+});
+
 </script>
 
 <template>
@@ -157,6 +224,7 @@ const recalcularBanco = async () => {
                 :actas="actasCajaFiltradas"
                 :mesActivo="mesActivo"
                 :anioActivo="anioActivo"
+                :saldoApertura="saldoAperturaCaja"
                 :user="user"
             />
 

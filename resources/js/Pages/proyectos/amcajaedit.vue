@@ -144,7 +144,7 @@ function submit() {
         // Construimos la URL de vinculación igual que la original:
         const url = `/proyectos/${props.proyecto.id}/inventarios/create` +
           `?am_row_id=${props.acta.id}` +
-          `&am_table=am_caja_proyecto_hola` + // cambia si el nombre de la tabla varía
+          `&am_table=${props.tabla}` + // cambia si el nombre de la tabla varía
           `&descripcion=${encodeURIComponent(form.descripcion)}` +
           `&numero=${encodeURIComponent(form.n_acta)}`
 

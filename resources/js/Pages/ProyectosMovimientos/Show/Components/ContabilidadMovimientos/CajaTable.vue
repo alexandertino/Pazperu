@@ -46,6 +46,25 @@ const eliminarCaja = async (id) => {
         Swal.fire('Error', err.response?.data?.message || 'No se pudo eliminar.', 'error');
     }
 };
+
+const saldoApertura = computed(() => {
+
+    if (!props.actas || props.actas.length === 0) return 0;
+
+    const ordenadas = [...props.actas].sort(
+        (a, b) => new Date(a.fecha) - new Date(b.fecha)
+    );
+
+    const primer = ordenadas[0];
+
+    const ingreso = parseFloat(primer.ingresos || 0);
+    const egreso = parseFloat(primer.egresos || 0);
+    const saldo = parseFloat(primer.saldo || 0);
+
+    return saldo - ingreso + egreso;
+
+});
+
 </script>
 
 <template>
@@ -71,9 +90,14 @@ const eliminarCaja = async (id) => {
                         Saldo apertura — {{ nombreMes(mesActivo === 1 ? 12 : mesActivo - 1) }}
                         {{ mesActivo === 1 ? (anioActivo - 1) : anioActivo }}
                     </td>
+
                     <td class="p-3"></td>
                     <td class="p-3"></td>
-                    <td class="p-3 font-semibold">0.00</td>
+
+                    <td class="p-3 font-semibold">
+                        {{ saldoApertura.toFixed(2) }}
+                    </td>
+
                     <td v-if="user.role === 'admin'" class="p-3"></td>
                 </tr>
 
