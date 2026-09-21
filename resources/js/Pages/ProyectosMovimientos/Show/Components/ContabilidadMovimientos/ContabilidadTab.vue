@@ -22,26 +22,71 @@ const tablaVisible = ref('caja');
 const mesActivo = ref(new Date().getMonth() + 1);
 const anioActivo = ref(new Date().getFullYear());
 
-// Computed para filtros por mes
-const actasCajaFiltradas = computed(() =>
-    (props.caja || []).filter(item => {
-        const fecha = item.fecha;
-        if (!fecha) return false;
-        const mes = parseInt(fecha.substring(5, 7));
-        const anio = parseInt(fecha.substring(0, 4));
-        return mes === mesActivo.value && anio === anioActivo.value;
-    })
-);
+const tablaCaja = computed(() => {
+    const base = props.proyecto.nombre
+        .toLowerCase()
+        .replace(/\s+/g, '_');
 
-const actasBancoFiltradas = computed(() =>
-    (props.banco || []).filter(item => {
-        const fecha = item.fecha;
-        if (!fecha) return false;
-        const mes = parseInt(fecha.substring(5, 7));
-        const anio = parseInt(fecha.substring(0, 4));
-        return mes === mesActivo.value && anio === anioActivo.value;
-    })
-);
+    return `am_caja_proyecto_${base}`;
+});
+
+const tablaBanco = computed(() => {
+    const base = props.proyecto.nombre
+        .toLowerCase()
+        .replace(/\s+/g, '_');
+
+    return `am_banco_proyecto_${base}`;
+});
+// Computed para filtros por mes
+const actasCajaFiltradas = computed(() => {
+    return (props.caja || [])
+        .filter(item => {
+            const fecha = item.fecha;
+            if (!fecha) return false;
+
+            const mes = parseInt(fecha.substring(5, 7));
+            const anio = parseInt(fecha.substring(0, 4));
+
+            return mes === mesActivo.value && anio === anioActivo.value;
+        })
+        .sort((a, b) => {
+
+            // primero ordenar por fecha
+            if (a.fecha !== b.fecha) {
+                return a.fecha.localeCompare(b.fecha);
+            }
+
+            // luego ordenar por numero de acta
+            const numA = parseInt(a.n_acta?.match(/\d+/)?.[0] || 0);
+            const numB = parseInt(b.n_acta?.match(/\d+/)?.[0] || 0);
+
+            return numA - numB;
+        });
+});
+
+const actasBancoFiltradas = computed(() => {
+    return (props.banco || [])
+        .filter(item => {
+            const fecha = item.fecha;
+            if (!fecha) return false;
+
+            const mes = parseInt(fecha.substring(5, 7));
+            const anio = parseInt(fecha.substring(0, 4));
+
+            return mes === mesActivo.value && anio === anioActivo.value;
+        })
+        .sort((a, b) => {
+
+            if (a.fecha !== b.fecha) {
+                return a.fecha.localeCompare(b.fecha);
+            }
+
+            const numA = parseInt(a.n_acta?.match(/\d+/)?.[0] || 0);
+            const numB = parseInt(b.n_acta?.match(/\d+/)?.[0] || 0);
+
+            return numA - numB;
+        });
+});
 
 const itemsEasyFiltrados = computed(() =>
     (props.easy || []).filter(item => {
@@ -195,6 +240,10 @@ const saldoAperturaCaja = computed(() => {
 
 });
 
+const irAOrden = () => {
+    router.visit('/orden')
+}
+
 </script>
 
 <template>
@@ -213,6 +262,7 @@ const saldoAperturaCaja = computed(() => {
             @exportar-excel="exportarExcel"
             @recalcular-caja="recalcularCaja"
             @recalcular-banco="recalcularBanco"
+            @ir-a-orden="irAOrden"
         />
 
         <!-- Tablas -->
@@ -226,6 +276,7 @@ const saldoAperturaCaja = computed(() => {
                 :anioActivo="anioActivo"
                 :saldoApertura="saldoAperturaCaja"
                 :user="user"
+                :tabla="tablaCaja"
             />
 
             <!-- Banco -->
@@ -236,6 +287,7 @@ const saldoAperturaCaja = computed(() => {
                 :mesActivo="mesActivo"
                 :anioActivo="anioActivo"
                 :user="user"
+                :tabla="tablaBanco"
             />
 
             <!-- Easy -->

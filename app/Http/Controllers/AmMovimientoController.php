@@ -679,4 +679,106 @@ class AmMovimientoController extends Controller
         }
     }
 
+public function subirConId(Request $request, $id)
+{
+    $tabla = $request->tabla;
+
+    DB::beginTransaction();
+    try {
+        $actual = DB::table($tabla)->where('id', $id)->first();
+
+        $anterior = DB::table($tabla)
+            ->where('orden', '<', $actual->orden)
+            ->orderBy('orden', 'desc')
+            ->first();
+
+        if (!$anterior) {
+            return response()->json(['ok' => false, 'message' => 'No hay anterior']);
+        }
+
+        // swap
+        DB::table($tabla)->where('id', $actual->id)->update([
+            'orden' => $anterior->orden
+        ]);
+
+        DB::table($tabla)->where('id', $anterior->id)->update([
+            'orden' => $actual->orden
+        ]);
+
+        DB::commit();
+
+        return response()->json(['ok' => true]);
+
+    } catch (\Throwable $e) {
+        DB::rollBack();
+        return response()->json([
+            'ok' => false,
+            'error' => $e->getMessage()
+        ], 500);
+    }
+}
+
+public function bajarConId($tabla, $id)
+{
+    Log::info('BAJAR - inicio', [
+        'tabla' => $tabla,
+        'id' => $id
+    ]);
+
+    if (!Schema::hasTable($tabla)) {
+        Log::error('BAJAR - tabla no existe', ['tabla' => $tabla]);
+        return response()->json(['ok' => false, 'message' => 'Tabla inválida'], 422);
+    }
+
+    DB::beginTransaction();
+    try {
+        $actual = DB::table($tabla)->where('id', $id)->first();
+        Log::info('BAJAR - actual', ['data' => $actual]);
+
+        if (!$actual) {
+            Log::error('BAJAR - registro actual no encontrado');
+            return response()->json(['ok' => false], 404);
+        }
+
+        $siguiente = DB::table($tabla)
+            ->where('id', '>', $id)
+            ->orderBy('id', 'asc')
+            ->first();
+
+        Log::info('BAJAR - siguiente', ['data' => $siguiente]);
+
+        if (!$siguiente) {
+            Log::warning('BAJAR - no hay siguiente');
+            return response()->json(['ok' => false]);
+        }
+
+        $tempId = -1 * rand(1, 999999);
+        Log::info('BAJAR - tempId generado', ['tempId' => $tempId]);
+
+        DB::table($tabla)->where('id', $actual->id)->update(['id' => $tempId]);
+        Log::info('BAJAR - actual movido a tempId');
+
+        DB::table($tabla)->where('id', $siguiente->id)->update(['id' => $actual->id]);
+        Log::info('BAJAR - siguiente toma lugar de actual');
+
+        DB::table($tabla)->where('id', $tempId)->update(['id' => $siguiente->id]);
+        Log::info('BAJAR - tempId toma lugar de siguiente');
+
+        DB::commit();
+
+        Log::info('BAJAR - commit OK');
+
+        return response()->json(['ok' => true]);
+
+    } catch (\Throwable $e) {
+        DB::rollBack();
+
+        Log::error('BAJAR - ERROR', [
+            'message' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ]);
+
+        return response()->json(['ok' => false], 500);
+    }
+}
 }

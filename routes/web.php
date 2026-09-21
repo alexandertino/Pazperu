@@ -25,6 +25,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Fondos\SubcuentaController;
 use App\Http\Controllers\Cuentas\CuentaGeneralController;
 use App\Http\Controllers\Movimientos\MovimientoController;
+use App\Http\Controllers\OrdenController;
 use Inertia\Inertia;
 
 Route::get('/', function () {
@@ -348,11 +349,19 @@ Route::post(
     '/subcuentas/recalcular-saldos',
     [SubcuentaController::class, 'recalcularSaldos']
 )->name('subcuentas.recalcular');
-
 // Rutas para pendientes
 Route::post('/movimientos/{id}/toggle-pendiente', [MovimientoController::class, 'togglePendiente']);
 Route::get('/cuentas/{cuentaId}/pendientes-activos', [MovimientoController::class, 'pendientesActivos']);
 Route::post('/pendientes/{pendienteId}/saldar', [MovimientoController::class, 'saldarPendiente']);
+
+// Rutas para orden
+Route::get('/orden', [OrdenController::class, 'index']);
+
+Route::post('/orden/{tabla}/mover-posicion/{id}', [OrdenController::class, 'moverAPosicion']);
+Route::get('/orden/{tabla}', [OrdenController::class, 'cargar']);
+Route::post('/orden/{tabla}/subir/{id}', [OrdenController::class, 'subir']);
+Route::post('/orden/{tabla}/bajar/{id}', [OrdenController::class, 'bajar']);
+Route::post('/orden/{tabla}/agregar', [OrdenController::class, 'agregar']);
 
 Route::post(
     '/movimientos/{id}/dividir',
